@@ -1,0 +1,12 @@
+node_modules
+dist
+api/.cache
+.models
+sample-photos
+.vscode
+.idea
+.env
+.env.*
+!.env.example
+.git
+.gitignore

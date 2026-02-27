@@ -1,0 +1,6 @@
+fastapi==0.115.8
+python-multipart==0.0.9
+uvicorn[standard]==0.30.6
+pillow==10.4.0
+open-clip-torch==2.26.1
+
