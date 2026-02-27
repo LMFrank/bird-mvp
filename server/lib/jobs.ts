@@ -116,7 +116,8 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
 
     j.total = rows.length
 
-    const cacheDir = path.join(process.cwd(), 'api', '.cache')
+    const cacheDir =
+      String(process.env.CACHE_DIR ?? '').trim() || path.join(process.cwd(), 'data', 'cache')
 
     for (const r of rows) {
       if (j.cancelRequested) {

@@ -4,6 +4,39 @@ import { getDb } from '../lib/catalog.js'
 
 const router = express.Router()
 
+router.get('/health', async (req: Request, res: Response) => {
+  void req
+  const base = String(process.env.BIRD_AI_URL ?? '').trim()
+  if (!base) {
+    res.status(400).json({ success: false, error: 'BIRD_AI_URL is not set' })
+    return
+  }
+
+  const url = `${base.replace(/\/$/, '')}/health`
+  try {
+    const r = await fetch(url)
+    const raw = await r.text()
+    let data: unknown
+    try {
+      data = raw ? (JSON.parse(raw) as unknown) : {}
+    } catch {
+      data = { success: false, error: raw || `HTTP ${r.status}` }
+    }
+    if (!r.ok) {
+      const msg =
+        typeof (data as { error?: unknown } | null)?.error === 'string'
+          ? (data as { error?: string }).error
+          : `HTTP ${r.status}`
+      res.status(502).json({ success: false, error: msg })
+      return
+    }
+    res.json({ success: true, ai: data })
+  } catch (e: unknown) {
+    const msg = e instanceof Error && e.message ? e.message : 'fetch failed'
+    res.status(502).json({ success: false, error: `无法连接 AI 服务：${url}（${msg}）` })
+  }
+})
+
 router.get('/species', (req: Request, res: Response) => {
   const db = getDb()
   const libraryId = Number(req.query.libraryId)
@@ -53,4 +86,3 @@ router.get('/species', (req: Request, res: Response) => {
 })
 
 export default router
-

@@ -6,7 +6,7 @@ function parseArgs(argv) {
   const out = {
     region: 'CN',
     locale: 'zh_CN',
-    outPath: path.join(process.cwd(), '.models', 'labels.csv'),
+    outPath: path.join(process.cwd(), 'data', 'models', 'labels.csv'),
     all: false,
   }
   for (let i = 2; i < argv.length; i += 1) {
@@ -16,7 +16,7 @@ function parseArgs(argv) {
     else if (a === '--out') out.outPath = String(argv[++i] ?? '')
     else if (a === '--all') out.all = true
   }
-  if (!out.outPath) out.outPath = path.join(process.cwd(), '.models', 'labels.csv')
+  if (!out.outPath) out.outPath = path.join(process.cwd(), 'data', 'models', 'labels.csv')
   return out
 }
 

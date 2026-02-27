@@ -24,6 +24,14 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     return
   }
 
+  if (/^[A-Za-z]:\\/.test(raw) && process.platform === 'linux') {
+    res.status(400).json({
+      success: false,
+      error: '容器内无法访问 Windows 路径，请改用挂载到容器内的路径（例如 /photos）',
+    })
+    return
+  }
+
   const rootPath = path.resolve(raw)
   try {
     const st = await fs.stat(rootPath)

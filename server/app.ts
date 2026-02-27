@@ -17,7 +17,8 @@ import { initCatalog } from './lib/catalog.js'
 // load env
 dotenv.config()
 
-const cacheDir = path.join(process.cwd(), 'api', '.cache')
+const cacheDir =
+  String(process.env.CACHE_DIR ?? '').trim() || path.join(process.cwd(), 'data', 'cache')
 initCatalog({ cacheDir })
 
 const app: express.Application = express()

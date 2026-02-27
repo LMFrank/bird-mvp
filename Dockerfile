@@ -15,5 +15,5 @@ RUN npm run build
 
 EXPOSE 3001
 
-CMD ["node", "--import", "tsx", "api/server.ts"]
+CMD ["node", "--import", "tsx", "server/server.ts"]
 

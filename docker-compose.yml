@@ -8,10 +8,11 @@ services:
       - SERVE_STATIC=1
       - STATIC_DIR=/app/dist
       - BIRD_AI_URL=http://ai:8000
+      - CACHE_DIR=/app/data/cache
     ports:
       - "3001:3001"
     volumes:
-      - ./api/.cache:/app/api/.cache
+      - ./data/cache:/app/data/cache
       - ./sample-photos:/photos:ro
     depends_on:
       - ai
@@ -26,6 +27,6 @@ services:
       - BIRD_LABELS_PATH=/models/labels.csv
       - HF_ENDPOINT=https://hf-mirror.com
     volumes:
-      - ./.models:/models
+      - ./data/models:/models
     gpus: all
 

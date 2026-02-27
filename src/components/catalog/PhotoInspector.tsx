@@ -166,7 +166,7 @@ export default function PhotoInspector() {
               </div>
               {typeof ai.labelsCount === 'number' && ai.labelsCount < 100 ? (
                 <div className="text-xs text-zinc-500">
-                  当前标签数较少，识别仅供参考；建议提供全量鸟种 CSV 到 .models/labels.csv
+                  当前标签数较少，识别仅供参考；建议提供全量鸟种 CSV 到 data/models/labels.csv
                 </div>
               ) : null}
               {(() => {

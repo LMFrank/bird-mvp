@@ -20,6 +20,8 @@ dist-ssr
 # Local data/cache
 .models
 api/.cache
+.git copy/
+data/
 
 # Python
 __pycache__/

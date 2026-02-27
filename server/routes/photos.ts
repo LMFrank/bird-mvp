@@ -143,7 +143,9 @@ router.get('/:id/thumb', asyncHandler(async (req: Request, res: Response) => {
     return
   }
 
-  const cacheDir = String(req.app.locals.cacheDir ?? path.join(process.cwd(), 'api', '.cache'))
+  const cacheDir = String(
+    req.app.locals.cacheDir ?? path.join(process.cwd(), 'data', 'cache'),
+  )
   const p = await ensureThumb(cacheDir, id, row.abs_path, size)
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
   res.sendFile(p)
@@ -166,7 +168,9 @@ router.post('/:id/identify', asyncHandler(async (req: Request, res: Response) =>
   }
 
   try {
-    const cacheDir = String(req.app.locals.cacheDir ?? path.join(process.cwd(), 'api', '.cache'))
+    const cacheDir = String(
+      req.app.locals.cacheDir ?? path.join(process.cwd(), 'data', 'cache'),
+    )
     const thumbPath = await ensureThumb(cacheDir, id, row.abs_path, 2048)
     const jpg = await fs.readFile(thumbPath)
     const ai = await identifyWithAi(jpg)

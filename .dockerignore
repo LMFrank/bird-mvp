@@ -1,11 +1,11 @@
 node_modules
 dist
-api/.cache
+server/.cache
 .models
+data
 sample-photos
 .vscode
 .idea
-.env
 .env.*
 !.env.example
 .git

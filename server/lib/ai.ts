@@ -28,10 +28,21 @@ export async function identifyWithAi(imageJpeg: Buffer): Promise<AiResult> {
   const form = new FormData()
   form.set('image', new Blob([imageJpeg], { type: 'image/jpeg' }), 'image.jpg')
 
-  const res = await fetch(`${base.replace(/\/$/, '')}/identify`, {
-    method: 'POST',
-    body: form,
-  })
+  const url = `${base.replace(/\/$/, '')}/identify`
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      body: form,
+    })
+  } catch (e: unknown) {
+    const inDockerHint =
+      process.platform !== 'linux' && /^https?:\/\/ai(?::|\/|$)/.test(base)
+        ? '（看起来你在宿主机运行但 BIRD_AI_URL 仍是 http://ai:8000；宿主机请用 http://localhost:8000，或改用 docker compose 启动）'
+        : ''
+    const msg = e instanceof Error && e.message ? e.message : 'fetch failed'
+    throw new Error(`无法连接 AI 服务：${url}（${msg}）${inDockerHint}`.trim())
+  }
 
   const data = (await res.json()) as unknown
   const ok = isRecord(data) && data.success === true

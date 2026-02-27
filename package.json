@@ -2,7 +2,7 @@
   "name": "bird-mvp",
   "description": "灵羽图库 (Bird MVP) - 本地鸟类照片智能管理工具",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -17,8 +17,9 @@
     "typecheck": "tsc --noEmit",
     "server:dev": "nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
-    "labels:cn": "node scripts/ebird_labels.mjs --region CN --locale zh_CN --out .models/labels.csv",
-    "labels:world": "node scripts/ebird_labels.mjs --all --locale zh_CN --out .models/labels.csv"
+    "data:clean": "node scripts/clean_data.mjs",
+    "labels:cn": "node scripts/ebird_labels.mjs --region CN --locale zh_CN --out data/models/labels.csv",
+    "labels:world": "node scripts/ebird_labels.mjs --all --locale zh_CN --out data/models/labels.csv"
   },
   "dependencies": {
     "@napi-rs/image": "^1.11.1",

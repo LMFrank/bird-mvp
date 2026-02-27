@@ -1,20 +1,16 @@
-# 灵羽图库 (Bird MVP) v0.1
+# 灵羽图库 (Bird MVP) v0.1.1
 
 这是一个本地运行的 Web 应用：前端用于快速浏览/筛选/打标，后端负责扫描目录、生成缩略图缓存、SQLite 持久化；并通过一个本地 AI 服务进行鸟种识别（BioCLIP2）。
+
+## 一句话启动及使用
+
 
 ## Docker 部署（推荐）
 
 ### 1) 配置镜像源（Docker Desktop）
 
-在 Docker Desktop 的 Engine/Daemon 配置中加入 registry mirror，让 Docker Hub 镜像通过该源拉取：
-
-```json
-{
-  "registry-mirrors": ["https://docker.aityp.com/"]
-}
-```
-
-如果你之前配置过其它 mirror（例如阿里云等）并且出现 `403`/`401` 拉取失败，建议先移除其它 mirror，仅保留上述配置。
+使用开源镜像站搜索镜像：https://docker.aityp.com/
+本项目dockerfile已直接添加国内镜像源，无需额外配置。
 
 ### 2) 启动
 
@@ -25,6 +21,18 @@ docker compose up --build -d
 ```
 
 打开：`http://localhost:3001/`
+
+### 可选：用 make 简化常用命令
+
+如果你本机有 GNU Make（例如 macOS/Linux，或 Windows 的 Git Bash/MSYS2），可以直接：
+
+```bash
+make help
+make up
+make logs
+make ai-health
+make data-clean
+```
 
 ### 3) 添加你的照片目录
 
@@ -54,7 +62,7 @@ volumes:
 
 ### 获取“全量中国鸟种”CSV（推荐：eBird API 自动生成）
 
-项目内置了一个脚本，使用 eBird API 拉取「中国（CN）区域曾记录的物种代码」+「eBird taxonomy（支持中文 locale）」并生成 `.models/labels.csv`。
+项目内置了一个脚本，使用 eBird API 拉取「中国（CN）区域曾记录的物种代码」+「eBird taxonomy（支持中文 locale）」并生成 `data/models/labels.csv`。
 
 说明：eBird API 大多数接口需要 API Key，并通过请求头 `x-ebirdapitoken` 传入。参考 eBird 官方 API 文档：https://documenter.getpostman.com/view/664302/S1ENwy59
 
@@ -66,8 +74,13 @@ volumes:
 $env:EBIRD_API_KEY = "你的 key"
 npm run labels:cn
 ```
+或者直接在.env添加key：
 
-成功后会生成：`.models/labels.csv`（容器内对应 `/models/labels.csv`），重启 AI 容器即可生效：
+```bash
+EBIRD_API_KEY=你的 key
+```
+
+成功后会生成：`data/models/labels.csv`（容器内对应 `/models/labels.csv`），重启 AI 容器即可生效：
 
 ```bash
 docker compose up -d --force-recreate ai
@@ -82,6 +95,16 @@ docker compose up -d --force-recreate ai
 1) 在 `docker-compose.yml` 的 `ai.environment` 里加：`FORCE_CPU=1`
 
 2) 删除或注释 `ai.gpus: all`
+
+### 识别报错 fetch failed / AI 不可用
+
+优先打开后端探测接口查看更具体的原因：
+
+- `http://localhost:3001/api/ai/health`
+
+常见原因：
+- `BIRD_AI_URL` 配置不正确：容器内通常是 `http://ai:8000`；宿主机本地运行则应使用可访问的地址（例如 `http://localhost:8000`）
+- `ai` 容器未启动或启动失败：尤其是在没有 NVIDIA GPU 的环境中，需按上面的“强制 CPU”处理
 
 ### 识别非中国鸟类（例如金刚鹦鹉）：生成“全球鸟种”CSV
 
