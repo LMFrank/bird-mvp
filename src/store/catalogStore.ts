@@ -15,6 +15,8 @@ import {
   patchPhoto,
   scanLibrary,
   startIdentifyLibrary,
+  clearPhotoAi,
+  clearLibraryAi,
 } from '@/api/catalogApi'
 
 type Filters = {
@@ -25,12 +27,24 @@ type Filters = {
   aiZh: string
 }
 
+export type DisplayLang = 'zh_CN' | 'zh_TW' | 'en' | 'sci'
+
+export type TaxonomyItem = {
+  zh_CN?: string
+  zh_TW?: string
+  en?: string
+}
+
+export type Taxonomy = Record<string, TaxonomyItem> // sciName -> item
+
 type CatalogState = {
   libraries: Library[]
   selectedLibraryId: number | null
   photos: Photo[]
   total: number
   aiSpecies: AiSpecies[]
+  taxonomy: Taxonomy
+  displayLang: DisplayLang
   loading: boolean
   scanning: boolean
   identifying: boolean
@@ -41,6 +55,8 @@ type CatalogState = {
   selectedPhoto: Photo | null
 
   loadLibraries: () => Promise<void>
+  loadTaxonomy: () => Promise<void>
+  setDisplayLang: (lang: DisplayLang) => void
   selectLibrary: (id: number) => Promise<void>
   createLibrary: (rootPath: string) => Promise<void>
   runScan: () => Promise<void>
@@ -54,9 +70,11 @@ type CatalogState = {
   ) => Promise<void>
 
   runIdentify: (id: number) => Promise<void>
+  clearIdentify: (id: number) => Promise<void>
   loadAiSpecies: () => Promise<void>
   startIdentifyAll: (opts?: { overwrite?: boolean }) => Promise<void>
   cancelIdentifyAll: () => Promise<void>
+  clearIdentifyAll: () => Promise<void>
 }
 
 const PAGE_SIZE = 200
@@ -72,6 +90,8 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   photos: [],
   total: 0,
   aiSpecies: [],
+  taxonomy: {},
+  displayLang: 'zh_CN',
   loading: false,
   scanning: false,
   identifying: false,
@@ -80,6 +100,22 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   filters: { status: 'all', ratingMin: 0, tag: '', q: '', aiZh: '' },
   selectedPhotoId: null,
   selectedPhoto: null,
+
+  loadTaxonomy: async () => {
+    try {
+      // 假设后端接口在 /api/ai/taxonomy
+      const base = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+      const res = await fetch(`${base}/api/ai/taxonomy`)
+      if (res.ok) {
+        const data = await res.json()
+        set({ taxonomy: data })
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  setDisplayLang: (lang: DisplayLang) => set({ displayLang: lang }),
 
   loadLibraries: async () => {
     set({ loading: true, error: null })
@@ -233,6 +269,21 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
+  clearIdentify: async (id) => {
+    try {
+      await clearPhotoAi(id)
+      set({
+        photos: get().photos.map((p) => (p.id === id ? { ...p, ai: null, aiTop1: null } : p)),
+        selectedPhoto:
+          get().selectedPhotoId === id && get().selectedPhoto
+            ? { ...get().selectedPhoto!, ai: null, aiTop1: null }
+            : get().selectedPhoto,
+      })
+    } catch (e: unknown) {
+      set({ error: errMsg(e, '清除失败') })
+    }
+  },
+
   loadAiSpecies: async () => {
     const id = get().selectedLibraryId
     if (!id) return
@@ -294,6 +345,19 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       set({ identifyJob: s.job, identifying: false })
     } catch (e: unknown) {
       set({ error: errMsg(e, '取消失败') })
+    }
+  },
+
+  clearIdentifyAll: async () => {
+    const id = get().selectedLibraryId
+    if (!id) return
+    try {
+      await clearLibraryAi(id)
+      set({ photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
+      await get().loadAiSpecies()
+      await get().loadMore()
+    } catch (e: unknown) {
+      set({ error: errMsg(e, '清除失败') })
     }
   },
 }))

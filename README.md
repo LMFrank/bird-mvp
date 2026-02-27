@@ -1,8 +1,20 @@
-# 灵羽图库 (Bird MVP) v0.1.1
+# 灵羽图库 (Bird MVP) v0.1.2
 
 这是一个本地运行的 Web 应用：前端用于快速浏览/筛选/打标，后端负责扫描目录、生成缩略图缓存、SQLite 持久化；并通过一个本地 AI 服务进行鸟种识别（BioCLIP2）。
 
 ## 一句话启动及使用
+
+```bash
+# 1. 启动服务（首次需构建）
+docker compose up --build -d
+
+# 2. 生成全球全量鸟种标签（推荐，大幅提高识别率）
+npm run labels:world && docker compose restart ai
+
+# 3. 浏览器访问：http://localhost:3001
+# 4. 在页面添加库路径 /photos 并扫描 -> 识别（如需覆盖重跑，点“重识别”）
+# 5. 如需清除识别结果：支持单张清除（详情页垃圾桶）与按库一键清除（顶部“清除识别”）
+```
 
 
 ## Docker 部署（推荐）
@@ -105,6 +117,7 @@ docker compose up -d --force-recreate ai
 常见原因：
 - `BIRD_AI_URL` 配置不正确：容器内通常是 `http://ai:8000`；宿主机本地运行则应使用可访问的地址（例如 `http://localhost:8000`）
 - `ai` 容器未启动或启动失败：尤其是在没有 NVIDIA GPU 的环境中，需按上面的“强制 CPU”处理
+- `ai` 容器刚启动/重启：模型在加载期会短暂返回 `loading`，等几十秒后再重试即可
 
 ### 识别非中国鸟类（例如金刚鹦鹉）：生成“全球鸟种”CSV
 

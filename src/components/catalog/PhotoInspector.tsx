@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Copy, ExternalLink, XCircle } from 'lucide-react'
+import { CheckCircle2, Copy, ExternalLink, XCircle, Trash2 } from 'lucide-react'
 import { thumbUrl } from '@/api/catalogApi'
 import { useCatalogStore } from '@/store/catalogStore'
 import TagEditor from '@/components/catalog/TagEditor'
+import { getBirdName } from '@/lib/utils'
 
 function formatBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return '0 B'
@@ -24,6 +25,9 @@ export default function PhotoInspector() {
     selectPhoto,
     applyPhotoPatch,
     runIdentify,
+    clearIdentify,
+    taxonomy,
+    displayLang,
   } = useCatalogStore()
 
   const [tagHotkeySignal, setTagHotkeySignal] = useState(0)
@@ -148,13 +152,24 @@ export default function PhotoInspector() {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-zinc-900">鸟种识别</div>
-            <button
-              className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
-              onClick={() => runIdentify(current.id)}
-              title="使用本地离线模型识别（基于预览图）"
-            >
-              识别
-            </button>
+            <div className="flex gap-2">
+              {ai ? (
+                <button
+                  className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50 text-rose-600"
+                  onClick={() => clearIdentify(current.id)}
+                  title="清除识别结果"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              ) : null}
+              <button
+                className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
+                onClick={() => runIdentify(current.id)}
+                title="使用本地离线模型识别（基于预览图）"
+              >
+                识别
+              </button>
+            </div>
           </div>
 
           {ai && ai.predictions?.length ? (
@@ -181,17 +196,18 @@ export default function PhotoInspector() {
               })()}
               <div className="space-y-1">
                 {ai.predictions.slice(0, 5).map((p, i) => {
-                  const title = [p.nameZh, p.nameScientific].filter(Boolean).join(' / ')
+                  const name = getBirdName(p.nameScientific, p.nameZh, taxonomy, displayLang)
+                  const title = [name, p.nameScientific].filter(Boolean).join(' / ')
                   return (
                     <div key={i} className="flex items-center justify-between gap-2 text-sm">
                       <div className="min-w-0 flex-1 truncate" title={title}>
-                        {p.nameZh ?? p.nameScientific ?? '未知'}
+                        {name}
                       </div>
                       <div className="shrink-0 text-xs text-zinc-600">{(p.score * 100).toFixed(1)}%</div>
                       <button
                         className="shrink-0 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
                         onClick={() => {
-                          const tag = p.nameZh ?? p.nameScientific
+                          const tag = name
                           if (!tag) return
                           applyPhotoPatch(current.id, { tags: Array.from(new Set([...tags, tag])).sort() })
                         }}

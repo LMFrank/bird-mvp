@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { thumbUrl, type Photo } from '@/api/catalogApi'
 import { useCatalogStore } from '@/store/catalogStore'
+import { getBirdName } from '@/lib/utils'
 
 function badgeForStatus(status: Photo['status']) {
   if (status === 'keep') return { icon: CheckCircle2, className: 'text-emerald-600' }
@@ -19,6 +20,8 @@ export default function PhotoGrid() {
     selectPhoto,
     selectedLibraryId,
     total,
+    taxonomy,
+    displayLang,
   } = useCatalogStore()
 
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -78,9 +81,14 @@ export default function PhotoGrid() {
                 loading="lazy"
               />
 
-              {p.aiTop1?.nameZh ? (
+              {p.aiTop1?.nameZh || p.aiTop1?.nameScientific ? (
                 <div className="pointer-events-none absolute left-2 top-2 max-w-[80%] truncate rounded bg-black/60 px-2 py-1 text-[10px] text-white">
-                  {p.aiTop1.nameZh}
+                  {getBirdName(
+                    p.aiTop1?.nameScientific,
+                    p.aiTop1?.nameZh,
+                    taxonomy,
+                    displayLang,
+                  )}
                 </div>
               ) : null}
 

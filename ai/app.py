@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import threading
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -148,16 +149,32 @@ class BioClipService:
 
 app = FastAPI()
 svc: Optional[BioClipService] = None
+svc_error: Optional[str] = None
 
 
 @app.on_event("startup")
 def _startup():
-  global svc
-  svc = BioClipService()
+  global svc, svc_error
+  svc = None
+  svc_error = None
+
+  def _load():
+    global svc, svc_error
+    try:
+      svc = BioClipService()
+      svc_error = None
+    except Exception as e:
+      svc = None
+      svc_error = str(e)
+
+  t = threading.Thread(target=_load, daemon=True)
+  t.start()
 
 
 @app.get("/health")
 def health():
+  if svc_error:
+    return {"success": False, "error": svc_error}
   if svc is None:
     return {"success": False, "error": "loading"}
   return {

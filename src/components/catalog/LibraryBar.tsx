@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FolderPlus, RefreshCw, Sparkles, X } from 'lucide-react'
-import { useCatalogStore } from '@/store/catalogStore'
+import { FolderPlus, RefreshCw, Sparkles, X, Languages, Trash2 } from 'lucide-react'
+import { useCatalogStore, type DisplayLang } from '@/store/catalogStore'
 
 export default function LibraryBar() {
   const {
@@ -15,7 +15,10 @@ export default function LibraryBar() {
     identifyJob,
     startIdentifyAll,
     cancelIdentifyAll,
+    clearIdentifyAll,
     loading,
+    displayLang,
+    setDisplayLang,
   } = useCatalogStore()
 
   const [rootPath, setRootPath] = useState('')
@@ -83,6 +86,20 @@ export default function LibraryBar() {
           重识别
         </button>
 
+        <button
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50 disabled:opacity-50 text-rose-600"
+          onClick={() => {
+            if (!selectedLibraryId) return
+            if (!confirm('确定要清除当前库的所有识别结果吗？')) return
+            clearIdentifyAll()
+          }}
+          disabled={!selectedLibraryId || identifying}
+          title="清除当前库的全部识别结果"
+        >
+          <Trash2 className="h-4 w-4" />
+          清除识别
+        </button>
+
         {identifyJob && (identifyJob.status === 'queued' || identifyJob.status === 'running') ? (
           <button
             className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
@@ -96,8 +113,23 @@ export default function LibraryBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1">
+          <Languages className="h-4 w-4 text-zinc-500" />
+          <select
+            className="h-7 border-none bg-transparent text-sm outline-none"
+            value={displayLang}
+            onChange={(e) => setDisplayLang(e.target.value as DisplayLang)}
+            title="切换鸟种名称显示语言"
+          >
+            <option value="zh_CN">简体中文</option>
+            <option value="zh_TW">繁體中文</option>
+            <option value="en">English</option>
+            <option value="sci">Scientific</option>
+          </select>
+        </div>
+
         <input
-          className="h-9 w-[420px] rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-zinc-400"
+          className="h-9 w-[320px] rounded-md border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-zinc-400"
           placeholder={`新增目录（示例：${
             current?.root_path ?? 'C:\\Photos\\JPG'
           }）`}

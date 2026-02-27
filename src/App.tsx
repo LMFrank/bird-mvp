@@ -1,7 +1,13 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Home from "@/pages/Home";
+import { useEffect } from "react";
+import { useCatalogStore } from "@/store/catalogStore";
 
 export default function App() {
+  useEffect(() => {
+    useCatalogStore.getState().loadTaxonomy()
+  }, [])
+
   return (
     <Router>
       <Routes>

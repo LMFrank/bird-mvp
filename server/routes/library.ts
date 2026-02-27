@@ -171,4 +171,26 @@ router.post('/:id/identify', (req: Request, res: Response) => {
   res.json({ success: true, job })
 })
 
+router.delete('/:id/ai', (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ success: false, error: 'invalid id' })
+    return
+  }
+  const db = getDb()
+  db.prepare(
+    `
+    DELETE FROM photo_ai_predictions
+    WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)
+    `,
+  ).run(id)
+  db.prepare(
+    `
+    DELETE FROM photo_ai
+    WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)
+    `,
+  ).run(id)
+  res.json({ success: true })
+})
+
 export default router

@@ -151,6 +151,12 @@ export async function identifyPhoto(id: number) {
   })
 }
 
+export async function clearPhotoAi(id: number) {
+  return api<ApiOk<Record<string, never>>>(`/api/photos/${id}/ai`, {
+    method: 'DELETE',
+  })
+}
+
 export type AiSpecies = {
   nameZh: string
   nameScientific: string
@@ -188,6 +194,10 @@ export async function startIdentifyLibrary(libraryId: number, opts?: { overwrite
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ overwrite: Boolean(opts?.overwrite), limit: opts?.limit ?? 0 }),
   })
+}
+
+export async function clearLibraryAi(libraryId: number) {
+  return api<ApiOk<Record<string, never>>>(`/api/library/${libraryId}/ai`, { method: 'DELETE' })
 }
 
 export async function getJob(id: string) {

@@ -130,8 +130,12 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
       j.currentPhotoId = r.id
       try {
         const thumbPath = await ensureThumb(cacheDir, r.id, r.abs_path, 2048)
+        console.log(`[Job] Identifying Photo #${r.id}: ${r.abs_path} (thumb: ${thumbPath})`)
         const jpg = await fs.readFile(thumbPath)
         const ai = await identifyWithAi(jpg)
+        console.log(
+          `[Job] Result for Photo #${r.id}: ${ai.predictions[0]?.nameZh ?? ai.predictions[0]?.nameScientific} (${ai.predictions[0]?.score})`,
+        )
         upsertPhotoAi(db, r.id, ai)
         j.succeeded += 1
       } catch (e: unknown) {

@@ -1,8 +1,21 @@
 import express, { type Request, type Response } from 'express'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { SQLInputValue } from 'node:sqlite'
 import { getDb } from '../lib/catalog.js'
 
 const router = express.Router()
+
+router.get('/taxonomy', (req: Request, res: Response) => {
+  const jsonPath = path.join(process.cwd(), 'data', 'models', 'taxonomy.json')
+  if (fs.existsSync(jsonPath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600')
+    res.sendFile(jsonPath)
+  } else {
+    // 如果没有 taxonomy.json，返回空对象
+    res.json({})
+  }
+})
 
 router.get('/health', async (req: Request, res: Response) => {
   void req
@@ -14,7 +27,24 @@ router.get('/health', async (req: Request, res: Response) => {
 
   const url = `${base.replace(/\/$/, '')}/health`
   try {
-    const r = await fetch(url)
+    const delaysMs = [0, 500, 1500, 4000]
+    let r: globalThis.Response | null = null
+    let lastErr: unknown = null
+    for (const d of delaysMs) {
+      if (d > 0) await new Promise((t) => setTimeout(t, d))
+      try {
+        r = await fetch(url)
+        lastErr = null
+        break
+      } catch (e: unknown) {
+        lastErr = e
+      }
+    }
+    if (!r) {
+      const msg = lastErr instanceof Error && lastErr.message ? lastErr.message : 'fetch failed'
+      res.status(502).json({ success: false, error: `无法连接 AI 服务：${url}（${msg}）` })
+      return
+    }
     const raw = await r.text()
     let data: unknown
     try {
