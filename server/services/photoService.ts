@@ -14,7 +14,7 @@ import {
   updatePhotoMeta,
 } from '../repos/photoRepo.js'
 
-export async function listPhotosService(q: ListPhotosQuery) {
+export function listPhotosService(q: ListPhotosQuery) {
   const db = getDb()
   const total = countListPhotos(db, q)
   const rows = listPhotos(db, q)
