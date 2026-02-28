@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { runMigrations } from './migrations.js'
 
 export type LibraryRow = {
   id: number
@@ -33,89 +34,35 @@ export type PhotoMetaRow = {
 
 type InitOptions = {
   cacheDir: string
+  migrationsDir?: string
 }
 
 let db: DatabaseSync | null = null
 
-export function initCatalog({ cacheDir }: InitOptions) {
+export function initCatalog({ cacheDir, migrationsDir }: InitOptions) {
   fs.mkdirSync(cacheDir, { recursive: true })
   const dbPath = path.join(cacheDir, 'catalog.sqlite')
   db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA synchronous = NORMAL;')
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS libraries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      root_path TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL
-    );
-  `)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      library_id INTEGER NOT NULL,
-      abs_path TEXT NOT NULL,
-      rel_path TEXT NOT NULL,
-      fingerprint TEXT NOT NULL UNIQUE,
-      size INTEGER NOT NULL,
-      mtime_ms INTEGER NOT NULL,
-      width INTEGER,
-      height INTEGER,
-      taken_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_library_id ON photos(library_id);')
-  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_mtime ON photos(mtime_ms);')
-  db.exec('CREATE INDEX IF NOT EXISTS idx_photos_rel_path ON photos(rel_path);')
+  const dir =
+    String(migrationsDir ?? '').trim() ||
+    String(process.env.MIGRATIONS_DIR ?? '').trim() ||
+    path.join(process.cwd(), 'server', 'migrations')
+  runMigrations(db, dir)
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photo_meta (
-      photo_id INTEGER PRIMARY KEY,
-      rating INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'none',
-      color TEXT NOT NULL DEFAULT 'none',
-      updated_at TEXT NOT NULL
-    );
-  `)
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photo_tags (
-      photo_id INTEGER NOT NULL,
-      tag TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(photo_id, tag)
-    );
-  `)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag);')
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photo_ai (
-      photo_id INTEGER PRIMARY KEY,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      result_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `)
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photo_ai_predictions (
-      photo_id INTEGER NOT NULL,
-      rank INTEGER NOT NULL,
-      name_zh TEXT,
-      name_scientific TEXT,
-      score REAL NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY(photo_id, rank)
-    );
-  `)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_ai_pred_top1_zh ON photo_ai_predictions(rank, name_zh);')
-  db.exec(
-    'CREATE INDEX IF NOT EXISTS idx_ai_pred_top1_sci ON photo_ai_predictions(rank, name_scientific);',
-  )
-  db.exec('CREATE INDEX IF NOT EXISTS idx_ai_pred_photo ON photo_ai_predictions(photo_id);')
+  const hasJobs = db
+    .prepare(`SELECT 1 as ok FROM sqlite_master WHERE type = 'table' AND name = 'jobs' LIMIT 1`)
+    .get() as { ok: 1 } | undefined
+  if (hasJobs) {
+    db.prepare(
+      `
+      UPDATE jobs
+      SET status = 'error', updated_at = ?
+      WHERE status IN ('queued', 'running')
+      `,
+    ).run(nowIso())
+  }
 }
 
 export function getDb() {

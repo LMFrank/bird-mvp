@@ -13,6 +13,7 @@ import jobsRoutes from './routes/jobs.js'
 import libraryRoutes from './routes/library.js'
 import photosRoutes from './routes/photos.js'
 import { initCatalog } from './lib/catalog.js'
+import { ApiError } from './lib/apiError.js'
 
 // load env
 dotenv.config()
@@ -68,6 +69,15 @@ app.use(
 app.use((error: Error, req: Request, res: Response, next: express.NextFunction) => {
   void req
   void next
+  if (error instanceof ApiError) {
+    res.status(error.status).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+      details: error.details ?? null,
+    })
+    return
+  }
   res.status(500).json({
     success: false,
     error: error?.message || 'Server internal error',

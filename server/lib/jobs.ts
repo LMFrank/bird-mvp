@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { getDb, nowIso } from './catalog.js'
-import { identifyWithAi, upsertPhotoAi } from './ai.js'
-import { ensureThumb } from './thumbs.js'
+import { identifyWithAi, mergeAiResults, upsertPhotoAi } from './ai.js'
+import { buildIdentifyJpegsFromPath, getIdentifyInputOptionsFromEnv } from './identifyInput.js'
+import { getJobRow, insertJob, requestCancel, updateJobRow } from '../repos/jobRepo.js'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 
@@ -27,7 +26,35 @@ type IdentifyLibraryJobInternal = IdentifyLibraryJob & {
   cancelRequested: boolean
 }
 
-const jobs = new Map<string, IdentifyLibraryJobInternal>()
+const maxConcurrency = Math.max(1, Number(process.env.JOB_CONCURRENCY ?? 1))
+let active = 0
+const waiters: Array<() => void> = []
+
+async function acquire() {
+  if (active < maxConcurrency) {
+    active += 1
+    return
+  }
+  await new Promise<void>((resolve) => waiters.push(resolve))
+  active += 1
+}
+
+function release() {
+  active = Math.max(0, active - 1)
+  const next = waiters.shift()
+  if (next) next()
+}
+
+async function runLimited<T>(fn: () => Promise<T>) {
+  await acquire()
+  try {
+    return await fn()
+  } finally {
+    release()
+  }
+}
+
+const running = new Map<string, IdentifyLibraryJobInternal>()
 
 function toPublicJob(j: IdentifyLibraryJobInternal): IdentifyLibraryJob {
   return {
@@ -48,19 +75,37 @@ function toPublicJob(j: IdentifyLibraryJobInternal): IdentifyLibraryJob {
 }
 
 export function getJob(id: string): IdentifyLibraryJob | null {
-  const j = jobs.get(id)
-  if (!j) return null
-  return toPublicJob(j)
+  const db = getDb()
+  const row = getJobRow(db, id)
+  if (!row) return null
+  try {
+    const parsed = JSON.parse(row.job_json) as IdentifyLibraryJob
+    return parsed
+  } catch {
+    return null
+  }
 }
 
 export function cancelJob(id: string): boolean {
-  const j = jobs.get(id)
-  if (!j) return false
-  j.cancelRequested = true
-  if (j.status === 'queued') {
-    j.status = 'cancelled'
-    j.finishedAt = nowIso()
+  const db = getDb()
+  const row = getJobRow(db, id)
+  if (!row) return false
+
+  requestCancel(db, id, nowIso())
+  const mem = running.get(id)
+  if (mem) mem.cancelRequested = true
+
+  if (row.status === 'queued') {
+    const job = JSON.parse(row.job_json) as IdentifyLibraryJob
+    const updated: IdentifyLibraryJob = {
+      ...job,
+      status: 'cancelled',
+      finishedAt: nowIso(),
+      message: 'cancelled',
+    }
+    updateJobRow(db, id, { status: updated.status, job_json: JSON.stringify(updated), updated_at: nowIso() })
   }
+
   return true
 }
 
@@ -86,14 +131,32 @@ export function createIdentifyLibraryJob(opts: {
     message: null,
     cancelRequested: false,
   }
-  jobs.set(id, j)
-  void runIdentifyLibraryJob(j, opts)
+  const createdAt = nowIso()
+  const db = getDb()
+  insertJob(db, {
+    id,
+    type: j.type,
+    status: j.status,
+    job_json: JSON.stringify(toPublicJob(j)),
+    cancel_requested: 0,
+    created_at: createdAt,
+  })
+
+  running.set(id, j)
+  void runLimited(async () => {
+    try {
+      await runIdentifyLibraryJob(j, opts)
+    } finally {
+      running.delete(id)
+    }
+  })
   return toPublicJob(j)
 }
 
 async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { overwrite?: boolean; limit?: number }) {
   j.status = 'running'
   j.startedAt = nowIso()
+  persistJob(j)
 
   try {
     const db = getDb()
@@ -115,24 +178,41 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
       .all(j.libraryId) as { id: number; abs_path: string }[]
 
     j.total = rows.length
+    persistJob(j)
 
-    const cacheDir =
-      String(process.env.CACHE_DIR ?? '').trim() || path.join(process.cwd(), 'data', 'cache')
+    const optsIdentify = getIdentifyInputOptionsFromEnv()
 
     for (const r of rows) {
-      if (j.cancelRequested) {
+      if (j.cancelRequested || isCancelRequested(j.id)) {
         j.status = 'cancelled'
         j.finishedAt = nowIso()
         j.message = 'cancelled'
+        persistJob(j)
         return
       }
 
       j.currentPhotoId = r.id
+      persistJob(j)
       try {
-        const thumbPath = await ensureThumb(cacheDir, r.id, r.abs_path, 2048)
-        console.log(`[Job] Identifying Photo #${r.id}: ${r.abs_path} (thumb: ${thumbPath})`)
-        const jpg = await fs.readFile(thumbPath)
-        const ai = await identifyWithAi(jpg)
+        console.log(`[Job] Identifying Photo #${r.id}: ${r.abs_path}`)
+        const inputs = await buildIdentifyJpegsFromPath(r.abs_path, {
+          maxSize: optsIdentify.maxSize,
+          quality: optsIdentify.quality,
+          crops: optsIdentify.cropsBatch,
+          cropScale: optsIdentify.cropScale,
+        })
+        const results = []
+        let lastErr: unknown = null
+        for (const jpg of inputs) {
+          try {
+            results.push(await identifyWithAi(jpg))
+            lastErr = null
+          } catch (e: unknown) {
+            lastErr = e
+          }
+        }
+        if (!results.length) throw lastErr
+        const ai = mergeAiResults(results)
         console.log(
           `[Job] Result for Photo #${r.id}: ${ai.predictions[0]?.nameZh ?? ai.predictions[0]?.nameScientific} (${ai.predictions[0]?.score})`,
         )
@@ -143,6 +223,7 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
         j.message = e instanceof Error && e.message ? e.message : 'identify failed'
       } finally {
         j.processed += 1
+        persistJob(j)
       }
     }
 
@@ -150,9 +231,26 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
     j.finishedAt = nowIso()
     j.currentPhotoId = null
     j.message = null
+    persistJob(j)
   } catch (e: unknown) {
     j.status = 'error'
     j.finishedAt = nowIso()
     j.message = e instanceof Error && e.message ? e.message : 'job failed'
+    persistJob(j)
   }
+}
+
+function persistJob(j: IdentifyLibraryJobInternal) {
+  const db = getDb()
+  updateJobRow(db, j.id, {
+    status: j.status,
+    job_json: JSON.stringify(toPublicJob(j)),
+    updated_at: nowIso(),
+  })
+}
+
+function isCancelRequested(id: string): boolean {
+  const db = getDb()
+  const row = getJobRow(db, id)
+  return row ? row.cancel_requested === 1 : false
 }

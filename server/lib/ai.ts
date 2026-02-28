@@ -15,6 +15,49 @@ export type AiResult = {
   predictions: AiPrediction[]
 }
 
+export function mergeAiResults(results: AiResult[]) {
+  const base = results.find((r) => Array.isArray(r.predictions) && r.predictions.length > 0) ?? results[0]
+  if (!base) {
+    return {
+      provider: 'unknown',
+      model: 'unknown',
+      predictions: [],
+    } satisfies AiResult
+  }
+
+  const topk = Math.max(1, ...results.map((r) => (Array.isArray(r.predictions) ? r.predictions.length : 0)))
+  const best = new Map<string, AiPrediction>()
+
+  for (const r of results) {
+    const preds = Array.isArray(r.predictions) ? r.predictions : []
+    for (const p of preds) {
+      const key = String(p.nameScientific || p.nameZh || '').trim()
+      if (!key) continue
+      const prev = best.get(key)
+      if (!prev || Number(p.score ?? 0) > Number(prev.score ?? 0)) {
+        best.set(key, {
+          nameZh: typeof p.nameZh === 'string' ? p.nameZh : prev?.nameZh,
+          nameScientific: typeof p.nameScientific === 'string' ? p.nameScientific : prev?.nameScientific,
+          score: Number(p.score ?? 0),
+        })
+      }
+    }
+  }
+
+  const merged = Array.from(best.values())
+    .filter((p) => Number.isFinite(p.score))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topk)
+
+  return {
+    provider: base.provider,
+    model: base.model,
+    labelsCount: base.labelsCount,
+    promptCount: base.promptCount,
+    predictions: merged,
+  } satisfies AiResult
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
