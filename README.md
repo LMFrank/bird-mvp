@@ -1,4 +1,4 @@
-# 灵羽图库 (Bird MVP) v0.1.2
+# 灵羽图库 (Bird MVP) v0.1.3
 
 这是一个本地运行的 Web 应用：前端用于快速浏览/筛选/打标，后端负责扫描目录、生成缩略图缓存、SQLite 持久化；并通过一个本地 AI 服务进行鸟种识别（BioCLIP2）。
 
@@ -8,7 +8,7 @@
 # 1. 启动服务（首次需构建）
 docker compose up --build -d
 
-# 2. 生成全球全量鸟种标签（推荐，大幅提高识别率）
+# 2. 生成全球全量鸟种标签（推荐，大幅提高识别率；已生成可跳过）
 npm run labels:world && docker compose restart ai
 
 # 3. 浏览器访问：http://localhost:3001
@@ -71,6 +71,45 @@ volumes:
 ```
 
 将该 CSV 挂载进 `ai` 容器并设置环境变量即可。
+
+### 识别方式（输入与裁剪）
+
+识别时并不是直接把原图丢给 AI，而是由后端先生成“识别专用图片”，再调用 AI 服务：
+
+- 输入图片：从原图生成 JPEG（默认最大边 4096、质量 90），用于尽量保留细节
+- 多裁剪（单张识别默认开启）：全图 + 多个方形裁剪分别识别，再把结果融合（同一物种取各次识别中的最高分）
+- 批量识别：默认只跑全图（更快）；可通过环境变量开启多裁剪
+
+识别入口：
+- 单张识别：详情页点击“识别”
+- 批量识别：库顶部点击“批量识别”
+
+### 识别输入调优（可选）
+
+后端识别输入相关环境变量（设置在 `app` 服务；本地开发则写入 `.env`）：
+
+- `IDENTIFY_MAX_SIZE`：识别输入最大边（默认 `4096`，范围 512–8192）
+- `IDENTIFY_JPEG_QUALITY`：识别输入 JPEG 质量（默认 `90`，范围 30–100）
+- `IDENTIFY_CROPS_SINGLE`：单张识别裁剪次数（默认 `5`，范围 1–9）
+- `IDENTIFY_CROPS_BATCH`：批量识别裁剪次数（默认 `1`，范围 1–9）
+- `IDENTIFY_CROP_SCALE`：裁剪边长占短边比例（默认 `0.6`，范围 0.35–0.9）
+
+Docker 示例（修改 `docker-compose.yml` 的 `app.environment`）：
+
+```yaml
+environment:
+  - IDENTIFY_MAX_SIZE=4096
+  - IDENTIFY_JPEG_QUALITY=90
+  - IDENTIFY_CROPS_SINGLE=5
+  - IDENTIFY_CROPS_BATCH=1
+  - IDENTIFY_CROP_SCALE=0.6
+```
+
+识别率不理想时的排查顺序：
+
+- 先看 AI 候选集是否正确：打开 `http://localhost:3001/api/ai/health`，确认 `labels` 数量与预期一致
+- 再看图片是否“小鸟占比太低”：优先用单张识别（默认多裁剪）验证效果；必要时提高 `IDENTIFY_CROPS_SINGLE` 或调大 `IDENTIFY_CROP_SCALE`
+- 仍不理想：增大 `IDENTIFY_MAX_SIZE`（例如 6144）或提高 `IDENTIFY_JPEG_QUALITY`（例如 95）
 
 ### 获取“全量中国鸟种”CSV（推荐：eBird API 自动生成）
 
@@ -148,3 +187,29 @@ npm run dev
 
 前端：`http://localhost:5173/`（代理到后端）
 后端：`http://localhost:3001/`
+
+### 数据与迁移（重要）
+
+- SQLite 存储位置：由 `CACHE_DIR` 决定，默认是 `data/cache`（库文件为 `catalog.sqlite`）
+- 数据库 schema 通过 migrations 管理：启动时自动执行 `server/migrations/*.sql`（或 `MIGRATIONS_DIR` 指定目录），并记录到 `schema_migrations` 表
+- 批量识别任务状态已持久化到 SQLite 的 `jobs` 表（用于轮询与取消）
+- 任务并发：用 `JOB_CONCURRENCY` 控制同时运行的任务数（默认 1，建议保持 1 避免把 IO/AI 打满）
+- 生成数据不进仓库：`data/cache`、`data/models` 等为运行产物/模型与标签缓存，默认已加入 `.gitignore`
+
+### 代码组织（后端）
+
+后端约定为：
+
+- `server/routes`：只做 HTTP 适配（解析参数/返回响应），不要写 SQL/文件系统/AI 调用细节
+- `server/services`：业务编排（“扫描库”“识别单张/批量”等）
+- `server/repos`：SQL 与数据访问
+- `server/lib`：基础设施与通用工具（AI client、缩略图、migrations、校验/错误等）
+
+## 更新记录
+
+### v0.1.3
+
+- 识别输入升级：从原图生成识别专用 JPEG（默认 4096px / Q90），提升细节保留
+- 多裁剪识别：单张识别默认开启“全图 + 多位置裁剪”并融合结果，提高小目标命中率
+- 新增识别输入参数：支持通过环境变量调节输入尺寸、质量与裁剪策略
+- 后端架构调整：routes/services/repos 分层，SQLite schema 引入 migrations，批量识别任务状态持久化并支持并发控制
