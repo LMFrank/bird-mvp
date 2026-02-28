@@ -14,14 +14,16 @@ dist-ssr
 
 # Secrets
 .env
-!.env.example
 .env.*
+!.env.example
 
 # Local data/cache
-.models
-api/.cache
+.models/
+api/.cache/
+data/cache/
+data/models/
+server/dist/
 .git copy/
-data/
 
 # Python
 __pycache__/
