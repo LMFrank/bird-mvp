@@ -111,6 +111,27 @@ environment:
 - 再看图片是否“小鸟占比太低”：优先用单张识别（默认多裁剪）验证效果；必要时提高 `IDENTIFY_CROPS_SINGLE` 或调大 `IDENTIFY_CROP_SCALE`
 - 仍不理想：增大 `IDENTIFY_MAX_SIZE`（例如 6144）或提高 `IDENTIFY_JPEG_QUALITY`（例如 95）
 
+### 低置信度兜底（可选：多模态大模型）
+
+当离线模型识别“置信度不高”（Top1 分数低或 Top1-Top2 间隔小）时，后端可选地调用多模态大模型对“候选 TopK”做一次兜底判断，并把结果展示在详情页的“兜底”区域。
+
+说明：
+- 兜底只会在离线模型给出的候选 TopK 里做选择，避免大模型乱猜
+- 默认不启用；开启后会产生联网请求与费用
+
+在 `.env` 里配置（参考 `.env.example`）：
+
+```bash
+# Qwen (Aliyun Bailian) - OpenAI 兼容模式
+QWEN_API_KEY=你的key
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL_NAME=qwen3-max
+
+# 可选：触发阈值（默认与前端提示一致）
+LLM_FALLBACK_TRIGGER_SCORE=0.6
+LLM_FALLBACK_TRIGGER_MARGIN=0.1
+```
+
 ### 获取“全量中国鸟种”CSV（推荐：eBird API 自动生成）
 
 项目内置了一个脚本，使用 eBird API 拉取「中国（CN）区域曾记录的物种代码」+「eBird taxonomy（支持中文 locale）」并生成 `data/models/labels.csv`。

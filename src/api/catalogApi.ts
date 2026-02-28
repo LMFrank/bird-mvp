@@ -22,6 +22,14 @@ export type Photo = {
     labelsCount?: number
     promptCount?: number
     predictions: { nameZh?: string; nameScientific?: string; score: number }[]
+    fallback?: {
+      provider: string
+      model: string
+      chosen?: { nameZh?: string; nameScientific?: string; score: number }
+      confidence?: number
+      needHumanReview?: boolean
+      reason?: string
+    }
   } | null
 }
 

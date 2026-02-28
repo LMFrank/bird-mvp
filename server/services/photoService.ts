@@ -1,5 +1,5 @@
 import { getDb, nowIso } from '../lib/catalog.js'
-import { getPhotoAi, identifyWithAi, mergeAiResults, upsertPhotoAi } from '../lib/ai.js'
+import { getPhotoAi, identifyWithAi, identifyWithLlmFallback, mergeAiResults, shouldTriggerLlmFallback, upsertPhotoAi } from '../lib/ai.js'
 import { buildIdentifyJpegsFromPath, getIdentifyInputOptionsFromEnv } from '../lib/identifyInput.js'
 import { ensureThumb, type ThumbSize } from '../lib/thumbs.js'
 import {
@@ -62,7 +62,15 @@ export async function identifyPhotoService(id: number) {
   }
   if (!results.length) throw lastErr
 
-  const ai = mergeAiResults(results)
+  let ai = mergeAiResults(results)
+  if (shouldTriggerLlmFallback(ai)) {
+    try {
+      const fb = await identifyWithLlmFallback(inputs[0]!, ai)
+      if (fb) ai = { ...ai, fallback: fb }
+    } catch (e: unknown) {
+      void e
+    }
+  }
   upsertPhotoAi(db, id, ai)
   return ai
 }

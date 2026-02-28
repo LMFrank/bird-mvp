@@ -194,6 +194,42 @@ export default function PhotoInspector() {
                 }
                 return null
               })()}
+              {ai.fallback?.chosen ? (
+                <div className="space-y-1 rounded-md border border-zinc-200 bg-white p-2">
+                  <div className="text-xs text-zinc-600">
+                    兜底：{ai.fallback.provider} / {ai.fallback.model}
+                    {ai.fallback.reason ? ` · ${ai.fallback.reason}` : ''}
+                  </div>
+                  {(() => {
+                    const p = ai.fallback?.chosen
+                    if (!p) return null
+                    const name = getBirdName(p.nameScientific, p.nameZh, taxonomy, displayLang)
+                    const title = [name, p.nameScientific].filter(Boolean).join(' / ')
+                    const conf = typeof ai.fallback?.confidence === 'number' ? ai.fallback.confidence : p.score
+                    return (
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <div className="min-w-0 flex-1 truncate" title={title}>
+                          {name}
+                        </div>
+                        <div className="shrink-0 text-xs text-zinc-600">{(conf * 100).toFixed(1)}%</div>
+                        <button
+                          className="shrink-0 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                          onClick={() => {
+                            const tag = name
+                            if (!tag) return
+                            applyPhotoPatch(current.id, { tags: Array.from(new Set([...tags, tag])).sort() })
+                          }}
+                          title="将该结果加入标签"
+                        >
+                          加入标签
+                        </button>
+                      </div>
+                    )
+                  })()}
+                </div>
+              ) : ai.fallback?.needHumanReview ? (
+                <div className="text-xs text-zinc-500">兜底也不确定：建议手动选择候选</div>
+              ) : null}
               <div className="space-y-1">
                 {ai.predictions.slice(0, 5).map((p, i) => {
                   const name = getBirdName(p.nameScientific, p.nameZh, taxonomy, displayLang)

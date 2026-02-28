@@ -7,15 +7,25 @@ export type AiPrediction = {
   score: number
 }
 
+export type AiFallback = {
+  provider: string
+  model: string
+  chosen?: AiPrediction
+  confidence?: number
+  needHumanReview?: boolean
+  reason?: string
+}
+
 export type AiResult = {
   provider: string
   model: string
   labelsCount?: number
   promptCount?: number
   predictions: AiPrediction[]
+  fallback?: AiFallback
 }
 
-export function mergeAiResults(results: AiResult[]) {
+export function mergeAiResults(results: AiResult[]): AiResult {
   const base = results.find((r) => Array.isArray(r.predictions) && r.predictions.length > 0) ?? results[0]
   if (!base) {
     return {
@@ -60,6 +70,178 @@ export function mergeAiResults(results: AiResult[]) {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
+}
+
+function clampInt(v: unknown, fallback: number, min: number, max: number) {
+  const n = Math.trunc(Number(v))
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+function clampFloat(v: unknown, fallback: number, min: number, max: number) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+function asBool(v: unknown, fallback: boolean) {
+  if (typeof v === 'boolean') return v
+  if (typeof v !== 'string') return fallback
+  const s = v.trim().toLowerCase()
+  if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true
+  if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false
+  return fallback
+}
+
+export function shouldTriggerLlmFallback(ai: AiResult) {
+  const p1 = ai.predictions?.[0]
+  if (!p1) return false
+  const p2 = ai.predictions?.[1]
+  const margin = p2 ? p1.score - p2.score : p1.score
+  const minScore = clampFloat(process.env.LLM_FALLBACK_TRIGGER_SCORE, 0.6, 0, 1)
+  const minMargin = clampFloat(process.env.LLM_FALLBACK_TRIGGER_MARGIN, 0.1, 0, 1)
+  return p1.score < minScore || margin < minMargin
+}
+
+function tryParseJsonObject(text: string): unknown {
+  const s = String(text ?? '').trim()
+  if (!s) return null
+  try {
+    return JSON.parse(s)
+  } catch {
+    const i = s.indexOf('{')
+    const j = s.lastIndexOf('}')
+    if (i >= 0 && j > i) {
+      try {
+        return JSON.parse(s.slice(i, j + 1))
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+}
+
+export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): Promise<AiFallback | null> {
+  const qwenApiKey = String(process.env.QWEN_API_KEY ?? '').trim()
+  const qwenBaseUrl = String(process.env.QWEN_BASE_URL ?? '').trim()
+  const qwenModelName = String(process.env.QWEN_MODEL_NAME ?? '').trim()
+
+  const enabled = asBool(process.env.LLM_FALLBACK_ENABLED, Boolean(qwenApiKey))
+  if (!enabled) return null
+
+  const apiKey = String(process.env.LLM_FALLBACK_API_KEY ?? qwenApiKey ?? '').trim()
+  if (!apiKey) return null
+
+  const explicitUrl = String(process.env.LLM_FALLBACK_URL ?? '').trim()
+  const url =
+    explicitUrl ||
+    (qwenBaseUrl ? `${qwenBaseUrl.replace(/\/$/, '')}/chat/completions` : 'https://api.openai.com/v1/chat/completions')
+
+  const model = String(process.env.LLM_FALLBACK_MODEL ?? '').trim() || qwenModelName || 'gpt-4o-mini'
+  const topk = clampInt(process.env.LLM_FALLBACK_CANDIDATES, 5, 2, 10)
+
+  const candidates = (Array.isArray(ai.predictions) ? ai.predictions : []).slice(0, topk).map((p) => ({
+    nameZh: typeof p.nameZh === 'string' ? p.nameZh : '',
+    nameScientific: typeof p.nameScientific === 'string' ? p.nameScientific : '',
+    score: Number(p.score ?? 0),
+  }))
+  if (!candidates.length) return null
+
+  const b64 = imageJpeg.toString('base64')
+  const candidateLines = candidates
+    .map((c, i) => `${i + 1}. ${[c.nameZh, c.nameScientific].filter(Boolean).join(' / ')} (${(c.score * 100).toFixed(1)}%)`)
+    .join('\n')
+
+  const schemaHint =
+    '{"chosenScientific":string|null,"chosenZh":string|null,"confidence":number,"needHumanReview":boolean,"reason":string}'
+
+  const body = {
+    model,
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content:
+          '你是鸟类物种鉴定助手。你必须严格输出 JSON（不要 markdown，不要额外文本）。如果无法确定，请 chosenScientific/chosenZh 为 null，needHumanReview 为 true。',
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              `请根据图片在下面候选物种中选择最可能的一个；必须来自候选列表，且名字要与候选一致。\n` +
+              `候选列表（离线模型 Top${candidates.length}）：\n${candidateLines}\n\n` +
+              `输出格式：${schemaHint}\n` +
+              `confidence 范围 0~1；reason 用一句话描述关键外观依据。`,
+          },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } },
+        ],
+      },
+    ],
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  const data = (await res.json()) as unknown
+  if (!res.ok) {
+    const msg =
+      isRecord(data) && isRecord(data.error) && typeof data.error.message === 'string'
+        ? data.error.message
+        : `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+
+  let content = ''
+  if (isRecord(data) && Array.isArray(data.choices) && isRecord(data.choices[0])) {
+    const msg = (data.choices[0] as Record<string, unknown>).message
+    if (isRecord(msg) && typeof msg.content === 'string') content = msg.content
+  }
+
+  const parsed = tryParseJsonObject(content)
+  if (!isRecord(parsed)) return null
+
+  const chosenScientific = typeof parsed.chosenScientific === 'string' ? parsed.chosenScientific.trim() : null
+  const chosenZh = typeof parsed.chosenZh === 'string' ? parsed.chosenZh.trim() : null
+  const confidence = clampFloat(parsed.confidence, NaN, 0, 1)
+  const needHumanReview = typeof parsed.needHumanReview === 'boolean' ? parsed.needHumanReview : undefined
+  const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : undefined
+
+  const matched =
+    chosenScientific || chosenZh
+      ? candidates.find((c) => (chosenScientific && c.nameScientific === chosenScientific) || (chosenZh && c.nameZh === chosenZh))
+      : undefined
+
+  let provider = 'llm'
+  try {
+    provider = new URL(url).hostname
+  } catch {
+    provider = 'llm'
+  }
+
+  return {
+    provider,
+    model,
+    chosen: matched
+      ? {
+          nameZh: matched.nameZh || undefined,
+          nameScientific: matched.nameScientific || undefined,
+          score: Number.isFinite(confidence) ? confidence : matched.score,
+        }
+      : undefined,
+    confidence: Number.isFinite(confidence) ? confidence : undefined,
+    needHumanReview,
+    reason,
+  }
 }
 
 export async function identifyWithAi(imageJpeg: Buffer): Promise<AiResult> {
@@ -178,4 +360,3 @@ export function getPhotoAi(db: DatabaseSync, photoId: number): AiResult | null {
     return null
   }
 }
-

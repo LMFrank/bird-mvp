@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getDb, nowIso } from './catalog.js'
-import { identifyWithAi, mergeAiResults, upsertPhotoAi } from './ai.js'
+import { identifyWithAi, identifyWithLlmFallback, mergeAiResults, shouldTriggerLlmFallback, upsertPhotoAi } from './ai.js'
 import { buildIdentifyJpegsFromPath, getIdentifyInputOptionsFromEnv } from './identifyInput.js'
 import { getJobRow, insertJob, requestCancel, updateJobRow } from '../repos/jobRepo.js'
 
@@ -212,7 +212,15 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
           }
         }
         if (!results.length) throw lastErr
-        const ai = mergeAiResults(results)
+        let ai = mergeAiResults(results)
+        if (shouldTriggerLlmFallback(ai)) {
+          try {
+            const fb = await identifyWithLlmFallback(inputs[0]!, ai)
+            if (fb) ai = { ...ai, fallback: fb }
+          } catch (e: unknown) {
+            void e
+          }
+        }
         console.log(
           `[Job] Result for Photo #${r.id}: ${ai.predictions[0]?.nameZh ?? ai.predictions[0]?.nameScientific} (${ai.predictions[0]?.score})`,
         )
