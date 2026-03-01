@@ -222,8 +222,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       if (seq !== photosQuerySeq) return
       set({ error: errMsg(e, '加载照片失败') })
     } finally {
-      if (seq !== photosQuerySeq) return
-      set({ loading: false })
+      if (seq === photosQuerySeq) set({ loading: false })
     }
   },
 

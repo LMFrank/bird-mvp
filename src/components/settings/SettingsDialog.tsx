@@ -43,9 +43,6 @@ export default function SettingsDialog(props: Props) {
   const [llmTriggerScore, setLlmTriggerScore] = useState('0.6')
   const [llmTriggerMargin, setLlmTriggerMargin] = useState('0.1')
 
-  const hasQwenKey = Boolean(data?.llm?.hasQwenKey)
-  const hasLlmKey = Boolean(data?.llm?.hasLlmKey)
-
   const title = useMemo(() => {
     if (!data) return '识别调优与兜底设置'
     return '识别调优与兜底设置'
