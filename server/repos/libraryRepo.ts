@@ -25,7 +25,7 @@ export function prepareUpsertPhoto(db: DatabaseSync) {
     ) VALUES (
       ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?
     )
-    ON CONFLICT(fingerprint) DO UPDATE SET
+    ON CONFLICT(library_id, fingerprint) DO UPDATE SET
       abs_path = excluded.abs_path,
       rel_path = excluded.rel_path,
       library_id = excluded.library_id,
@@ -36,7 +36,37 @@ export function prepareUpsertPhoto(db: DatabaseSync) {
 }
 
 export function prepareSelectPhotoIdByFingerprint(db: DatabaseSync) {
-  return db.prepare('SELECT id FROM photos WHERE fingerprint = ?')
+  return db.prepare('SELECT id FROM photos WHERE library_id = ? AND fingerprint = ?')
+}
+
+export function listLibraryPhotoPaths(db: DatabaseSync, libraryId: number) {
+  return db
+    .prepare('SELECT id, abs_path FROM photos WHERE library_id = ?')
+    .all(libraryId) as { id: number; abs_path: string }[]
+}
+
+export function deletePhotosCascade(db: DatabaseSync, photoIds: number[]) {
+  if (!photoIds.length) return
+  const delTags = db.prepare('DELETE FROM photo_tags WHERE photo_id = ?')
+  const delAiPred = db.prepare('DELETE FROM photo_ai_predictions WHERE photo_id = ?')
+  const delAi = db.prepare('DELETE FROM photo_ai WHERE photo_id = ?')
+  const delMeta = db.prepare('DELETE FROM photo_meta WHERE photo_id = ?')
+  const delPhoto = db.prepare('DELETE FROM photos WHERE id = ?')
+
+  db.exec('BEGIN;')
+  try {
+    for (const id of photoIds) {
+      delTags.run(id)
+      delAiPred.run(id)
+      delAi.run(id)
+      delMeta.run(id)
+      delPhoto.run(id)
+    }
+    db.exec('COMMIT;')
+  } catch (e) {
+    db.exec('ROLLBACK;')
+    throw e
+  }
 }
 
 export function deleteLibraryAi(db: DatabaseSync, libraryId: number) {

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "client:dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "preview": "vite preview",
@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "server:dev": "nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
+    "smoke": "tsx scripts/smoke_api.ts",
     "data:clean": "node scripts/clean_data.mjs",
     "labels:cn": "node scripts/ebird_labels.mjs --region CN --locale zh_CN --out data/models/labels.csv",
     "labels:world": "node scripts/ebird_labels.mjs --all --locale zh_CN --out data/models/labels.csv"

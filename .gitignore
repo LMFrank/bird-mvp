@@ -24,6 +24,8 @@ data/cache/
 data/models/
 server/dist/
 .git copy/
+data/cache/*.sqlite*
+data/cache/*.db*
 
 # Python
 __pycache__/

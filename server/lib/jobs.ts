@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { getDb, nowIso } from './catalog.js'
 import { identifyWithAi, identifyWithLlmFallback, mergeAiResults, shouldTriggerLlmFallback, upsertPhotoAi } from './ai.js'
-import { buildIdentifyJpegsFromPath, getIdentifyInputOptionsFromEnv } from './identifyInput.js'
+import { buildIdentifyJpegsFromPathCached, getIdentifyInputOptionsFromEnv } from './identifyInput.js'
 import { getJobRow, insertJob, requestCancel, updateJobRow } from '../repos/jobRepo.js'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
@@ -24,6 +24,9 @@ export type IdentifyLibraryJob = {
 
 type IdentifyLibraryJobInternal = IdentifyLibraryJob & {
   cancelRequested: boolean
+  lastPersistMs: number
+  lastPersistProcessed: number
+  lastPersistPhotoId: number | null
 }
 
 const maxConcurrency = Math.max(1, Number(process.env.JOB_CONCURRENCY ?? 1))
@@ -130,6 +133,9 @@ export function createIdentifyLibraryJob(opts: {
     currentPhotoId: null,
     message: null,
     cancelRequested: false,
+    lastPersistMs: 0,
+    lastPersistProcessed: 0,
+    lastPersistPhotoId: null,
   }
   const createdAt = nowIso()
   const db = getDb()
@@ -156,7 +162,7 @@ export function createIdentifyLibraryJob(opts: {
 async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { overwrite?: boolean; limit?: number }) {
   j.status = 'running'
   j.startedAt = nowIso()
-  persistJob(j)
+  persistJob(j, true)
 
   try {
     const db = getDb()
@@ -178,7 +184,7 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
       .all(j.libraryId) as { id: number; abs_path: string }[]
 
     j.total = rows.length
-    persistJob(j)
+    persistJob(j, true)
 
     const optsIdentify = getIdentifyInputOptionsFromEnv()
 
@@ -187,7 +193,7 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
         j.status = 'cancelled'
         j.finishedAt = nowIso()
         j.message = 'cancelled'
-        persistJob(j)
+        persistJob(j, true)
         return
       }
 
@@ -195,11 +201,11 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
       persistJob(j)
       try {
         console.log(`[Job] Identifying Photo #${r.id}: ${r.abs_path}`)
-        const inputs = await buildIdentifyJpegsFromPath(r.abs_path, {
+        const inputs = await buildIdentifyJpegsFromPathCached(r.id, r.abs_path, {
           maxSize: optsIdentify.maxSize,
           quality: optsIdentify.quality,
           crops: optsIdentify.cropsBatch,
-          cropScale: optsIdentify.cropScale,
+          cropScales: optsIdentify.cropScalesBatch,
         })
         const results = []
         let lastErr: unknown = null
@@ -216,9 +222,18 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
         if (shouldTriggerLlmFallback(ai)) {
           try {
             const fb = await identifyWithLlmFallback(inputs[0]!, ai)
-            if (fb) ai = { ...ai, fallback: fb }
+            ai = { ...ai, fallback: fb }
           } catch (e: unknown) {
-            void e
+            const msg = e instanceof Error && e.message ? e.message : 'unknown error'
+            ai = {
+              ...ai,
+              fallback: {
+                provider: 'llm',
+                model: 'unknown',
+                needHumanReview: true,
+                reason: `兜底失败：${msg}`,
+              },
+            }
           }
         }
         console.log(
@@ -239,16 +254,25 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
     j.finishedAt = nowIso()
     j.currentPhotoId = null
     j.message = null
-    persistJob(j)
+    persistJob(j, true)
   } catch (e: unknown) {
     j.status = 'error'
     j.finishedAt = nowIso()
     j.message = e instanceof Error && e.message ? e.message : 'job failed'
-    persistJob(j)
+    persistJob(j, true)
   }
 }
 
-function persistJob(j: IdentifyLibraryJobInternal) {
+function persistJob(j: IdentifyLibraryJobInternal, force?: boolean) {
+  const ms = Date.now()
+  if (!force) {
+    const sameProcessed = j.processed === j.lastPersistProcessed
+    const samePhoto = j.currentPhotoId === j.lastPersistPhotoId
+    if (sameProcessed && samePhoto && ms - j.lastPersistMs < 500) return
+  }
+  j.lastPersistMs = ms
+  j.lastPersistProcessed = j.processed
+  j.lastPersistPhotoId = j.currentPhotoId
   const db = getDb()
   updateJobRow(db, j.id, {
     status: j.status,

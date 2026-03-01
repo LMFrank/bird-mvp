@@ -12,6 +12,7 @@ import aiRoutes from './routes/ai.js'
 import jobsRoutes from './routes/jobs.js'
 import libraryRoutes from './routes/library.js'
 import photosRoutes from './routes/photos.js'
+import settingsRoutes from './routes/settings.js'
 import { initCatalog } from './lib/catalog.js'
 import { ApiError } from './lib/apiError.js'
 
@@ -38,6 +39,7 @@ app.use('/api/ai', aiRoutes)
 app.use('/api/jobs', jobsRoutes)
 app.use('/api/library', libraryRoutes)
 app.use('/api/photos', photosRoutes)
+app.use('/api/settings', settingsRoutes)
 
 const serveStatic = String(process.env.SERVE_STATIC ?? '') === '1'
 const staticDir = String(process.env.STATIC_DIR ?? path.join(process.cwd(), 'dist'))

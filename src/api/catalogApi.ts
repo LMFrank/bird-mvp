@@ -217,3 +217,53 @@ export async function cancelJob(id: string) {
 }
 
 export type { ApiErr }
+
+export type AppSettings = {
+  identify: {
+    maxSize: number
+    quality: number
+    cropsSingle: number
+    cropsBatch: number
+    cropScale: number
+    cropScalesSingle: number[]
+    cropScalesBatch: number[]
+  }
+  llm: {
+    enabled: boolean
+    qwenBaseUrl: string
+    qwenModelName: string
+    llmUrl: string
+    llmModel: string
+    candidates: string
+    triggerScore: string
+    triggerMargin: string
+    hasQwenKey: boolean
+    hasLlmKey: boolean
+    qwenKeySource?: 'runtime' | 'env' | 'none'
+    llmKeySource?: 'runtime' | 'env' | 'none'
+    runtimeSupported?: boolean
+  } & {
+    qwenApiKey?: string
+    apiKey?: string
+  }
+}
+
+export async function getSettings() {
+  return api<ApiOk<AppSettings>>('/api/settings')
+}
+
+export type AppSettingsPatch = {
+  identify?: Partial<AppSettings['identify']>
+  llm?: Partial<Omit<AppSettings['llm'], 'hasQwenKey' | 'hasLlmKey'>> & {
+    qwenApiKey?: string
+    apiKey?: string
+  }
+}
+
+export async function updateSettings(patch: AppSettingsPatch) {
+  return api<ApiOk<AppSettings>>('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+}

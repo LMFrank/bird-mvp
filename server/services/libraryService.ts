@@ -5,10 +5,12 @@ import { computeFingerprint } from '../lib/fingerprint.js'
 import { ensurePhotoMeta, getDb, nowIso } from '../lib/catalog.js'
 import { createIdentifyLibraryJob } from '../lib/jobs.js'
 import {
+  deletePhotosCascade,
   deleteLibraryAi,
   getLibraryById,
   getLibraryByRootPath,
   insertLibraryIgnore,
+  listLibraryPhotoPaths,
   listLibraries,
   prepareSelectPhotoIdByFingerprint,
   prepareUpsertPhoto,
@@ -75,12 +77,15 @@ export async function scanLibraryService(libraryId: number) {
   const upsert = prepareUpsertPhoto(db)
   const selectId = prepareSelectPhotoIdByFingerprint(db)
   const now = nowIso()
+  const scanned = new Set<string>()
+  const normAbs = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p))
 
   for (const img of images) {
+    scanned.add(normAbs(img.absPath))
     try {
       const st = await fs.stat(img.absPath)
       const fingerprint = await computeFingerprint({ absPath: img.absPath, size: st.size })
-      const before = selectId.get(fingerprint) as { id: number } | undefined
+      const before = selectId.get(lib.id, fingerprint) as { id: number } | undefined
       upsert.run(
         lib.id,
         img.absPath,
@@ -91,7 +96,7 @@ export async function scanLibraryService(libraryId: number) {
         now,
         now,
       )
-      const after = selectId.get(fingerprint) as { id: number } | undefined
+      const after = selectId.get(lib.id, fingerprint) as { id: number } | undefined
       if (!before && after) created += 1
       else updated += 1
       if (after) ensurePhotoMeta(after.id)
@@ -99,6 +104,10 @@ export async function scanLibraryService(libraryId: number) {
       skipped += 1
     }
   }
+
+  const existing = listLibraryPhotoPaths(db, lib.id)
+  const removedIds = existing.filter((r) => !scanned.has(normAbs(r.abs_path))).map((r) => r.id)
+  deletePhotosCascade(db, removedIds)
 
   const elapsedMs = Date.now() - startedAt
   return {

@@ -86,13 +86,15 @@ volumes:
 
 ### 识别输入调优（可选）
 
-后端识别输入相关环境变量（设置在 `app` 服务；本地开发则写入 `.env`）：
+识别输入调优支持两种方式：
+- 推荐：页面顶部“调优”面板修改（保存到本地 SQLite，立即生效）
+- 环境变量：设置在 `app` 服务（Docker 在 `docker-compose.yml`；本地开发写入 `.env`）
 
 - `IDENTIFY_MAX_SIZE`：识别输入最大边（默认 `4096`，范围 512–8192）
 - `IDENTIFY_JPEG_QUALITY`：识别输入 JPEG 质量（默认 `90`，范围 30–100）
-- `IDENTIFY_CROPS_SINGLE`：单张识别裁剪次数（默认 `5`，范围 1–9）
-- `IDENTIFY_CROPS_BATCH`：批量识别裁剪次数（默认 `1`，范围 1–9）
-- `IDENTIFY_CROP_SCALE`：裁剪边长占短边比例（默认 `0.6`，范围 0.35–0.9）
+- `IDENTIFY_CROPS_SINGLE`：单张识别裁剪次数（默认 `9`，范围 1–9）
+- `IDENTIFY_CROPS_BATCH`：批量识别裁剪次数（默认 `3`，范围 1–9）
+- `IDENTIFY_CROP_SCALES_SINGLE` / `IDENTIFY_CROP_SCALES_BATCH`：多尺度裁剪（逗号分隔，范围 0.35–0.9；例如 `0.6,0.45`）
 
 Docker 示例（修改 `docker-compose.yml` 的 `app.environment`）：
 
@@ -100,9 +102,10 @@ Docker 示例（修改 `docker-compose.yml` 的 `app.environment`）：
 environment:
   - IDENTIFY_MAX_SIZE=4096
   - IDENTIFY_JPEG_QUALITY=90
-  - IDENTIFY_CROPS_SINGLE=5
-  - IDENTIFY_CROPS_BATCH=1
-  - IDENTIFY_CROP_SCALE=0.6
+  - IDENTIFY_CROPS_SINGLE=9
+  - IDENTIFY_CROPS_BATCH=3
+  - IDENTIFY_CROP_SCALES_SINGLE=0.6,0.45
+  - IDENTIFY_CROP_SCALES_BATCH=0.6,0.45
 ```
 
 识别率不理想时的排查顺序：
@@ -117,15 +120,16 @@ environment:
 
 说明：
 - 兜底只会在离线模型给出的候选 TopK 里做选择，避免大模型乱猜
-- 默认不启用；开启后会产生联网请求与费用
+- 开启后会产生联网请求与费用
+- 推荐用页面顶部“调优”面板启用并填写 Key（Key 存本地 SQLite，不会回显也不会写回 `.env`）
 
-在 `.env` 里配置（参考 `.env.example`）：
+用环境变量配置（参考 `.env.example`）：
 
 ```bash
-# Qwen (Aliyun Bailian) - OpenAI 兼容模式
-QWEN_API_KEY=你的key
+# Qwen (DashScope OpenAI 兼容模式；模型需支持图片输入，通常为 *vl* 系列)
+QWEN_API_KEY=你的 key
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_MODEL_NAME=qwen3-max
+QWEN_MODEL_NAME=qwen-vl-plus
 
 # 可选：触发阈值（默认与前端提示一致）
 LLM_FALLBACK_TRIGGER_SCORE=0.6

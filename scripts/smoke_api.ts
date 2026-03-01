@@ -10,11 +10,19 @@ const server = app.listen(0)
 try {
   const addr = server.address()
   if (!addr || typeof addr === 'string') throw new Error('failed to bind')
-  const url = `http://127.0.0.1:${addr.port}/api/health`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`health failed: ${res.status}`)
-  const json = (await res.json()) as { success?: boolean; message?: string }
-  if (!json?.success) throw new Error('health response invalid')
+  const base = `http://127.0.0.1:${addr.port}`
+  {
+    const res = await fetch(`${base}/api/health`)
+    if (!res.ok) throw new Error(`health failed: ${res.status}`)
+    const json = (await res.json()) as { success?: boolean; message?: string }
+    if (!json?.success) throw new Error('health response invalid')
+  }
+  {
+    const res = await fetch(`${base}/api/settings`)
+    if (!res.ok) throw new Error(`settings failed: ${res.status}`)
+    const json = (await res.json()) as { success?: boolean }
+    if (!json?.success) throw new Error('settings response invalid')
+  }
 } finally {
   await new Promise<void>((resolve) => server.close(() => resolve()))
 }

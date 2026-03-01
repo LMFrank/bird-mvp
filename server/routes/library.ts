@@ -35,7 +35,7 @@ router.post('/:id/scan', asyncHandler(async (req: Request, res: Response) => {
 router.post('/:id/identify', (req: Request, res: Response) => {
   const id = requiredInt('id', req.params.id)
   const overwrite = asBool(req.body?.overwrite, { default: false })
-  const limit = asInt(req.body?.limit, { default: 0, min: 0 })
+  const limit = asInt(req.body?.limit, { default: 0, min: 0, max: 5000 })
   const job = createIdentifyLibraryJobService({
     libraryId: id,
     overwrite,

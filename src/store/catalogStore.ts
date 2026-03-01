@@ -53,6 +53,8 @@ type CatalogState = {
   filters: Filters
   selectedPhotoId: number | null
   selectedPhoto: Photo | null
+  photoIdentifyingId: number | null
+  photoClearingId: number | null
 
   loadLibraries: () => Promise<void>
   loadTaxonomy: () => Promise<void>
@@ -84,6 +86,12 @@ function errMsg(e: unknown, fallback: string) {
   return fallback
 }
 
+let photosQuerySeq = 0
+function invalidatePhotosQuery() {
+  photosQuerySeq += 1
+  return photosQuerySeq
+}
+
 export const useCatalogStore = create<CatalogState>((set, get) => ({
   libraries: [],
   selectedLibraryId: null,
@@ -100,6 +108,8 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   filters: { status: 'all', ratingMin: 0, tag: '', q: '', aiZh: '' },
   selectedPhotoId: null,
   selectedPhoto: null,
+  photoIdentifyingId: null,
+  photoClearingId: null,
 
   loadTaxonomy: async () => {
     try {
@@ -134,6 +144,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   },
 
   selectLibrary: async (id: number) => {
+    invalidatePhotosQuery()
     set({
       selectedLibraryId: id,
       photos: [],
@@ -165,6 +176,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   runScan: async () => {
     const id = get().selectedLibraryId
     if (!id) return
+    invalidatePhotosQuery()
     set({ scanning: true, error: null })
     try {
       await scanLibrary(id)
@@ -178,6 +190,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   },
 
   setFilters: async (patch: Partial<Filters>) => {
+    invalidatePhotosQuery()
     set({ filters: { ...get().filters, ...patch }, photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
     await get().loadMore()
   },
@@ -189,6 +202,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     const offset = get().photos.length
     if (get().total !== 0 && offset >= get().total) return
 
+    const seq = photosQuerySeq
     set({ loading: true, error: null })
     try {
       const f = get().filters
@@ -202,10 +216,13 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
         offset,
         limit: PAGE_SIZE,
       })
+      if (seq !== photosQuerySeq) return
       set({ photos: [...get().photos, ...data.photos], total: data.total })
     } catch (e: unknown) {
+      if (seq !== photosQuerySeq) return
       set({ error: errMsg(e, '加载照片失败') })
     } finally {
+      if (seq !== photosQuerySeq) return
       set({ loading: false })
     }
   },
@@ -255,6 +272,8 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   },
 
   runIdentify: async (id) => {
+    if (get().photoIdentifyingId === id || get().photoClearingId === id) return
+    set({ photoIdentifyingId: id, error: null })
     try {
       const data = await identifyPhoto(id)
       set({
@@ -266,10 +285,14 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       })
     } catch (e: unknown) {
       set({ error: errMsg(e, '识别失败') })
+    } finally {
+      if (get().photoIdentifyingId === id) set({ photoIdentifyingId: null })
     }
   },
 
   clearIdentify: async (id) => {
+    if (get().photoClearingId === id || get().photoIdentifyingId === id) return
+    set({ photoClearingId: id, error: null })
     try {
       await clearPhotoAi(id)
       set({
@@ -281,6 +304,8 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       })
     } catch (e: unknown) {
       set({ error: errMsg(e, '清除失败') })
+    } finally {
+      if (get().photoClearingId === id) set({ photoClearingId: null })
     }
   },
 
@@ -323,6 +348,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
           if (s.job.failed > 0) {
             set({ error: `批量识别完成，但有 ${s.job.failed} 张失败：${s.job.message || '请重试'}` })
           }
+          invalidatePhotosQuery()
           set({ photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
           await get().loadAiSpecies()
           await get().loadMore()
@@ -353,6 +379,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     if (!id) return
     try {
       await clearLibraryAi(id)
+      invalidatePhotosQuery()
       set({ photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
       await get().loadAiSpecies()
       await get().loadMore()

@@ -28,6 +28,8 @@ export default function PhotoInspector() {
     clearIdentify,
     taxonomy,
     displayLang,
+    photoIdentifyingId,
+    photoClearingId,
   } = useCatalogStore()
 
   const [tagHotkeySignal, setTagHotkeySignal] = useState(0)
@@ -88,6 +90,8 @@ export default function PhotoInspector() {
 
   const tags = current.tags ?? []
   const ai = current.ai ?? null
+  const busyIdentify = photoIdentifyingId === current.id
+  const busyClear = photoClearingId === current.id
 
   return (
     <div className="hidden h-[calc(100vh-120px)] w-[420px] shrink-0 overflow-auto border-l border-zinc-200 bg-white lg:block">
@@ -157,6 +161,7 @@ export default function PhotoInspector() {
                 <button
                   className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50 text-rose-600"
                   onClick={() => clearIdentify(current.id)}
+                  disabled={busyClear || busyIdentify}
                   title="清除识别结果"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -165,9 +170,10 @@ export default function PhotoInspector() {
               <button
                 className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
                 onClick={() => runIdentify(current.id)}
-                title="使用本地离线模型识别（基于预览图）"
+                disabled={busyIdentify || busyClear}
+                title={busyIdentify ? '识别中...' : '使用本地离线模型识别（基于预览图）'}
               >
-                识别
+                {busyIdentify ? '识别中...' : '识别'}
               </button>
             </div>
           </div>
@@ -228,7 +234,13 @@ export default function PhotoInspector() {
                   })()}
                 </div>
               ) : ai.fallback?.needHumanReview ? (
-                <div className="text-xs text-zinc-500">兜底也不确定：建议手动选择候选</div>
+                <div className="space-y-1 rounded-md border border-zinc-200 bg-white p-2">
+                  <div className="text-xs text-zinc-600">
+                    兜底：{ai.fallback.provider} / {ai.fallback.model}
+                    {ai.fallback.reason ? ` · ${ai.fallback.reason}` : ''}
+                  </div>
+                  <div className="text-xs text-zinc-500">兜底也不确定：建议手动选择候选</div>
+                </div>
               ) : null}
               <div className="space-y-1">
                 {ai.predictions.slice(0, 5).map((p, i) => {

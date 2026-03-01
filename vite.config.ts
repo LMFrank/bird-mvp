@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 
+const proxyLog = process.env.VITE_PROXY_LOG === '1'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -21,6 +23,7 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         configure: (proxy) => {
+          if (!proxyLog) return
           proxy.on('error', (err) => {
             console.log('proxy error', err);
           });

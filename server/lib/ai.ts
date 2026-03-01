@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso } from './catalog.js'
+import { getRuntimeSetting } from './settings.js'
 
 export type AiPrediction = {
   nameZh?: string
@@ -93,13 +94,17 @@ function asBool(v: unknown, fallback: boolean) {
   return fallback
 }
 
+function envOrSetting(key: string) {
+  return getRuntimeSetting(key) ?? (process.env as Record<string, unknown>)[key]
+}
+
 export function shouldTriggerLlmFallback(ai: AiResult) {
   const p1 = ai.predictions?.[0]
   if (!p1) return false
   const p2 = ai.predictions?.[1]
   const margin = p2 ? p1.score - p2.score : p1.score
-  const minScore = clampFloat(process.env.LLM_FALLBACK_TRIGGER_SCORE, 0.6, 0, 1)
-  const minMargin = clampFloat(process.env.LLM_FALLBACK_TRIGGER_MARGIN, 0.1, 0, 1)
+  const minScore = clampFloat(envOrSetting('LLM_FALLBACK_TRIGGER_SCORE'), 0.6, 0, 1)
+  const minMargin = clampFloat(envOrSetting('LLM_FALLBACK_TRIGGER_MARGIN'), 0.1, 0, 1)
   return p1.score < minScore || margin < minMargin
 }
 
@@ -122,31 +127,57 @@ function tryParseJsonObject(text: string): unknown {
   }
 }
 
-export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): Promise<AiFallback | null> {
-  const qwenApiKey = String(process.env.QWEN_API_KEY ?? '').trim()
-  const qwenBaseUrl = String(process.env.QWEN_BASE_URL ?? '').trim()
-  const qwenModelName = String(process.env.QWEN_MODEL_NAME ?? '').trim()
+export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): Promise<AiFallback> {
+  const qwenApiKey = String(envOrSetting('QWEN_API_KEY') ?? '').trim()
+  const qwenBaseUrl = String(envOrSetting('QWEN_BASE_URL') ?? '').trim()
+  const qwenModelName = String(envOrSetting('QWEN_MODEL_NAME') ?? '').trim()
 
-  const enabled = asBool(process.env.LLM_FALLBACK_ENABLED, Boolean(qwenApiKey))
-  if (!enabled) return null
+  const enabled = asBool(envOrSetting('LLM_FALLBACK_ENABLED'), Boolean(qwenApiKey))
+  if (!enabled) {
+    return {
+      provider: 'llm',
+      model: 'disabled',
+      needHumanReview: true,
+      reason: '兜底开关关闭（在“调优”面板开启，或清空 LLM_FALLBACK_ENABLED=0）',
+    }
+  }
 
-  const apiKey = String(process.env.LLM_FALLBACK_API_KEY ?? qwenApiKey ?? '').trim()
-  if (!apiKey) return null
+  const llmFallbackKey = String(envOrSetting('LLM_FALLBACK_API_KEY') ?? '').trim()
+  const apiKey = llmFallbackKey || qwenApiKey
+  if (!apiKey) {
+    const rtQwen = Boolean(String(getRuntimeSetting('QWEN_API_KEY') ?? '').trim())
+    const envQwen = Boolean(String(process.env.QWEN_API_KEY ?? '').trim())
+    const rtLlm = Boolean(String(getRuntimeSetting('LLM_FALLBACK_API_KEY') ?? '').trim())
+    const envLlm = Boolean(String(process.env.LLM_FALLBACK_API_KEY ?? '').trim())
+    return {
+      provider: 'llm',
+      model: 'disabled',
+      needHumanReview: true,
+      reason: `未检测到 API Key（Qwen rt=${rtQwen ? 1 : 0} env=${envQwen ? 1 : 0}；OpenAI rt=${rtLlm ? 1 : 0} env=${envLlm ? 1 : 0}）`,
+    }
+  }
 
-  const explicitUrl = String(process.env.LLM_FALLBACK_URL ?? '').trim()
+  const explicitUrl = String(envOrSetting('LLM_FALLBACK_URL') ?? '').trim()
   const url =
     explicitUrl ||
     (qwenBaseUrl ? `${qwenBaseUrl.replace(/\/$/, '')}/chat/completions` : 'https://api.openai.com/v1/chat/completions')
 
-  const model = String(process.env.LLM_FALLBACK_MODEL ?? '').trim() || qwenModelName || 'gpt-4o-mini'
-  const topk = clampInt(process.env.LLM_FALLBACK_CANDIDATES, 5, 2, 10)
+  const model = String(envOrSetting('LLM_FALLBACK_MODEL') ?? '').trim() || qwenModelName || 'gpt-4o-mini'
+  const topk = clampInt(envOrSetting('LLM_FALLBACK_CANDIDATES'), 5, 2, 10)
 
   const candidates = (Array.isArray(ai.predictions) ? ai.predictions : []).slice(0, topk).map((p) => ({
     nameZh: typeof p.nameZh === 'string' ? p.nameZh : '',
     nameScientific: typeof p.nameScientific === 'string' ? p.nameScientific : '',
     score: Number(p.score ?? 0),
   }))
-  if (!candidates.length) return null
+  if (!candidates.length) {
+    return {
+      provider: 'llm',
+      model,
+      needHumanReview: true,
+      reason: '没有可用于兜底的候选（离线候选为空）',
+    }
+  }
 
   const b64 = imageJpeg.toString('base64')
   const candidateLines = candidates
@@ -204,11 +235,37 @@ export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): 
   let content = ''
   if (isRecord(data) && Array.isArray(data.choices) && isRecord(data.choices[0])) {
     const msg = (data.choices[0] as Record<string, unknown>).message
-    if (isRecord(msg) && typeof msg.content === 'string') content = msg.content
+    if (isRecord(msg)) {
+      const c = msg.content as unknown
+      if (typeof c === 'string') {
+        content = c
+      } else if (Array.isArray(c)) {
+        const parts = c
+          .filter(isRecord)
+          .map((p) => (typeof p.text === 'string' ? p.text : ''))
+          .filter(Boolean)
+        content = parts.join('\n')
+      } else if (c != null) {
+        content = JSON.stringify(c)
+      }
+    }
   }
 
   const parsed = tryParseJsonObject(content)
-  if (!isRecord(parsed)) return null
+  let provider = 'llm'
+  try {
+    provider = new URL(url).hostname
+  } catch {
+    provider = 'llm'
+  }
+  if (!isRecord(parsed)) {
+    return {
+      provider,
+      model,
+      needHumanReview: true,
+      reason: '兜底响应无法解析（建议换模型或关闭“强制 JSON 输出”相关选项）',
+    }
+  }
 
   const chosenScientific = typeof parsed.chosenScientific === 'string' ? parsed.chosenScientific.trim() : null
   const chosenZh = typeof parsed.chosenZh === 'string' ? parsed.chosenZh.trim() : null
@@ -220,13 +277,6 @@ export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): 
     chosenScientific || chosenZh
       ? candidates.find((c) => (chosenScientific && c.nameScientific === chosenScientific) || (chosenZh && c.nameZh === chosenZh))
       : undefined
-
-  let provider = 'llm'
-  try {
-    provider = new URL(url).hostname
-  } catch {
-    provider = 'llm'
-  }
 
   return {
     provider,

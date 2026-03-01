@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FolderPlus, RefreshCw, Sparkles, X, Languages, Trash2 } from 'lucide-react'
+import { FolderPlus, RefreshCw, Sparkles, X, Languages, Trash2, SlidersHorizontal } from 'lucide-react'
 import { useCatalogStore, type DisplayLang } from '@/store/catalogStore'
+import SettingsDialog from '@/components/settings/SettingsDialog'
 
 export default function LibraryBar() {
   const {
@@ -22,6 +23,7 @@ export default function LibraryBar() {
   } = useCatalogStore()
 
   const [rootPath, setRootPath] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     loadLibraries()
@@ -113,6 +115,14 @@ export default function LibraryBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <button
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
+          onClick={() => setSettingsOpen(true)}
+          title="识别调优与兜底设置"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          调优
+        </button>
         <div className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1">
           <Languages className="h-4 w-4 text-zinc-500" />
           <select
@@ -151,6 +161,7 @@ export default function LibraryBar() {
           添加
         </button>
       </div>
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }

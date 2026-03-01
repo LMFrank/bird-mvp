@@ -1,6 +1,6 @@
 import { getDb, nowIso } from '../lib/catalog.js'
 import { getPhotoAi, identifyWithAi, identifyWithLlmFallback, mergeAiResults, shouldTriggerLlmFallback, upsertPhotoAi } from '../lib/ai.js'
-import { buildIdentifyJpegsFromPath, getIdentifyInputOptionsFromEnv } from '../lib/identifyInput.js'
+import { buildIdentifyJpegsFromPathCached, getIdentifyInputOptionsFromEnv } from '../lib/identifyInput.js'
 import { ensureThumb, type ThumbSize } from '../lib/thumbs.js'
 import {
   countListPhotos,
@@ -43,11 +43,11 @@ export async function identifyPhotoService(id: number) {
   if (!absPath) return null
 
   const opts = getIdentifyInputOptionsFromEnv()
-  const inputs = await buildIdentifyJpegsFromPath(absPath, {
+  const inputs = await buildIdentifyJpegsFromPathCached(id, absPath, {
     maxSize: opts.maxSize,
     quality: opts.quality,
     crops: opts.cropsSingle,
-    cropScale: opts.cropScale,
+    cropScales: opts.cropScalesSingle,
   })
 
   const results = []
@@ -66,9 +66,18 @@ export async function identifyPhotoService(id: number) {
   if (shouldTriggerLlmFallback(ai)) {
     try {
       const fb = await identifyWithLlmFallback(inputs[0]!, ai)
-      if (fb) ai = { ...ai, fallback: fb }
+      ai = { ...ai, fallback: fb }
     } catch (e: unknown) {
-      void e
+      const msg = e instanceof Error && e.message ? e.message : 'unknown error'
+      ai = {
+        ...ai,
+        fallback: {
+          provider: 'llm',
+          model: 'unknown',
+          needHumanReview: true,
+          reason: `兜底失败：${msg}`,
+        },
+      }
     }
   }
   upsertPhotoAi(db, id, ai)
