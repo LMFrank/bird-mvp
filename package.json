@@ -2,7 +2,7 @@
   "name": "bird-mvp",
   "description": "灵羽图库 (Bird MVP) - 本地鸟类照片智能管理工具",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "engines": {
     "node": ">=22"
