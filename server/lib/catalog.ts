@@ -30,6 +30,9 @@ export type PhotoMetaRow = {
   status: 'none' | 'keep' | 'reject'
   color: string
   updated_at: string
+  aesthetic_score?: number | null
+  aesthetic_mtime_ms?: number | null
+  aesthetic_updated_at?: string | null
 }
 
 type InitOptions = {

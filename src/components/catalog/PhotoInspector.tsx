@@ -17,6 +17,35 @@ function formatBytes(n: number) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+function baseName(p: string) {
+  const s = String(p ?? '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i >= 0 ? s.slice(i + 1) : s
+}
+
+function dirName(p: string) {
+  const s = String(p ?? '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i >= 0 ? s.slice(0, i) : ''
+}
+
+function formatTime(v: unknown) {
+  if (typeof v === 'number' && Number.isFinite(v)) return new Date(v).toLocaleString()
+  if (typeof v === 'string' && v.trim()) {
+    const d = new Date(v)
+    if (!Number.isNaN(d.getTime())) return d.toLocaleString()
+  }
+  return '—'
+}
+
+function formatExposureComp(v: unknown) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  if (Math.abs(n) < 1e-6) return '0'
+  const s = n > 0 ? '+' : ''
+  return `${s}${Math.round(n * 10) / 10}`
+}
+
 export default function PhotoInspector() {
   const {
     photos,
@@ -94,12 +123,23 @@ export default function PhotoInspector() {
   const busyClear = photoClearingId === current.id
 
   return (
-    <div className="hidden h-[calc(100vh-120px)] w-[420px] shrink-0 overflow-auto border-l border-zinc-200 bg-white lg:block">
-      <div className="space-y-4 p-4">
+    <div className="hidden h-[calc(100vh-120px)] w-[520px] shrink-0 overflow-auto border-l border-zinc-200 bg-white lg:block">
+      <div className="space-y-5 p-5">
         <div className="space-y-2">
           <div className="text-sm font-medium text-zinc-900">预览</div>
           <div className="overflow-hidden rounded-md border border-zinc-200 bg-zinc-100">
             <img className="w-full object-contain" src={thumbUrl(current.id, 2048)} alt={current.rel_path} />
+          </div>
+          <div className="text-xs text-zinc-600">
+            {typeof (current.aesthetic_score_cal ?? current.aesthetic_score) === 'number' &&
+            Number.isFinite(current.aesthetic_score_cal ?? current.aesthetic_score) ? (
+              <>
+                美学分 {(current.aesthetic_score_cal ?? current.aesthetic_score!).toFixed(1)} / 100 ·{' '}
+                {(Math.round(((current.aesthetic_score_cal ?? current.aesthetic_score!) / 20) * 10) / 10).toFixed(1)}★
+              </>
+            ) : (
+              <>美学分 未计算（点“识别”或扫描后生成）</>
+            )}
           </div>
         </div>
 
@@ -275,15 +315,113 @@ export default function PhotoInspector() {
 
         <div className="space-y-2">
           <div className="text-sm font-medium text-zinc-900">信息</div>
-          <div className="space-y-1 text-xs text-zinc-700">
-            <div className="truncate" title={current.rel_path}>
-              {current.rel_path}
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <div className="space-y-1 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">文件名</div>
+                <div className="min-w-0 flex-1 truncate text-right text-zinc-900" title={baseName(current.rel_path)}>
+                  {baseName(current.rel_path)}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">相对路径</div>
+                <div className="min-w-0 flex-1 truncate text-right text-zinc-900" title={current.rel_path}>
+                  {current.rel_path}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">本地目录</div>
+                <div className="min-w-0 flex-1 truncate text-right text-zinc-900" title={dirName(current.abs_path)}>
+                  {dirName(current.abs_path) || '—'}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">本地路径</div>
+                <div className="min-w-0 flex-1 truncate text-right text-zinc-900" title={current.abs_path}>
+                  {current.abs_path}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="text-zinc-500">修改时间</div>
+                <div className="text-right text-zinc-900">{formatTime(current.mtime_ms)}</div>
+              </div>
+              {current.taken_at ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-zinc-500">拍摄时间</div>
+                  <div className="text-right text-zinc-900">{formatTime(current.taken_at)}</div>
+                </div>
+              ) : null}
+              {typeof current.width === 'number' && Number.isFinite(current.width) && typeof current.height === 'number' && Number.isFinite(current.height) ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-zinc-500">分辨率</div>
+                  <div className="text-right text-zinc-900">
+                    {Math.trunc(current.width)} × {Math.trunc(current.height)}
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">大小</div>
+                <div className="text-right text-zinc-900">{formatBytes(current.size)}</div>
+              </div>
+              <div className="pt-2 text-[11px] font-semibold text-zinc-700">EXIF</div>
+              {current.exif ? (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">相机</div>
+                    <div
+                      className="min-w-0 flex-1 truncate text-right text-zinc-900"
+                      title={`${current.exif.cameraMake ?? ''} ${current.exif.cameraModel ?? ''}`.trim()}
+                    >
+                      {[current.exif.cameraMake, current.exif.cameraModel].filter(Boolean).join(' ') || '—'}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">镜头</div>
+                    <div className="min-w-0 flex-1 truncate text-right text-zinc-900" title={current.exif.lensModel ?? ''}>
+                      {current.exif.lensModel || '—'}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">焦距</div>
+                    <div className="text-right text-zinc-900">
+                      {typeof current.exif.focalLengthMm === 'number' ? `${current.exif.focalLengthMm}mm` : '—'}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">光圈</div>
+                    <div className="text-right text-zinc-900">
+                      {typeof current.exif.aperture === 'number' ? `f/${current.exif.aperture}` : '—'}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">快门</div>
+                    <div className="text-right text-zinc-900">{current.exif.shutter || '—'}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">ISO</div>
+                    <div className="text-right text-zinc-900">{typeof current.exif.iso === 'number' ? String(current.exif.iso) : '—'}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-zinc-500">曝光补偿</div>
+                    <div className="text-right text-zinc-900">{formatExposureComp(current.exif.exposureComp)}</div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs text-zinc-500">尚未提取（点开照片后会自动提取；若文件无 EXIF 也会显示为空）</div>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">ID</div>
+                <div className="text-right text-zinc-900">{current.id}</div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">状态</div>
+                <div className="text-right text-zinc-900">{current.status}</div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-zinc-500">星级</div>
+                <div className="text-right text-zinc-900">{current.rating}★</div>
+              </div>
             </div>
-            <div className="truncate" title={current.abs_path}>
-              {current.abs_path}
-            </div>
-            <div>{new Date(current.mtime_ms).toLocaleString()}</div>
-            <div>{formatBytes(current.size)}</div>
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
             <button
@@ -295,6 +433,16 @@ export default function PhotoInspector() {
             >
               <Copy className="h-4 w-4" />
               复制路径
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
+              onClick={async () => {
+                await navigator.clipboard.writeText(current.rel_path)
+              }}
+              title="复制相对路径"
+            >
+              <Copy className="h-4 w-4" />
+              复制相对路径
             </button>
             <a
               className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"

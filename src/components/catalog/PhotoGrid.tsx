@@ -98,8 +98,14 @@ export default function PhotoGrid() {
                   {p.rating > 0 ? (
                     <div className="text-xs font-medium text-white">{p.rating}★</div>
                   ) : (
-                    <div className="text-xs text-white/70">未评</div>
+                    <div className="text-xs text-white/70">未打星</div>
                   )}
+                  {typeof (p.aesthetic_score_cal ?? p.aesthetic_score) === 'number' &&
+                  Number.isFinite(p.aesthetic_score_cal ?? p.aesthetic_score) ? (
+                    <div className="ml-1 text-xs text-white/80">
+                      美学 {(p.aesthetic_score_cal ?? p.aesthetic_score!).toFixed(0)}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="max-w-[120px] truncate text-xs text-white/80">{p.rel_path}</div>
               </div>

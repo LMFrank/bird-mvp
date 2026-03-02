@@ -74,7 +74,7 @@ export default function LibraryBar() {
         >
           <Sparkles className={identifying ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
           {identifyJob && (identifyJob.status === 'queued' || identifyJob.status === 'running')
-            ? `一键识别 ${identifyJob.processed}/${identifyJob.total}`
+            ? `一键识别 ${identifyJob.processed}/${identifyJob.total}${identifyJob.failed ? ` · 失败 ${identifyJob.failed}` : ''}`
             : '一键识别'}
         </button>
 

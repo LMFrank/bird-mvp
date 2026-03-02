@@ -122,8 +122,7 @@ class BioClipService:
     return acc
 
   @torch.no_grad()
-  def identify_jpeg(self, jpg: bytes, topk: int = 5):
-    img = Image.open(io.BytesIO(jpg)).convert("RGB")
+  def identify_image(self, img: Image.Image, topk: int = 5):
     image = self.preprocess(img).unsqueeze(0).to(self.device)
     image_features = self.model.encode_image(image)
     image_features = image_features / image_features.norm(dim=-1, keepdim=True)
@@ -146,25 +145,147 @@ class BioClipService:
       preds.append({"nameZh": l.name_zh, "nameScientific": l.name_scientific, "score": float(score)})
     return preds
 
+  @torch.no_grad()
+  def identify_jpeg(self, jpg: bytes, topk: int = 5):
+    img = Image.open(io.BytesIO(jpg)).convert("RGB")
+    return self.identify_image(img, topk=topk)
+
+
+@dataclass(frozen=True)
+class DetectBox:
+  x1: float
+  y1: float
+  x2: float
+  y2: float
+  score: float
+
+
+class DetectorService:
+  def __init__(self):
+    self.enabled = os.environ.get("DETECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+    self.model_id = os.environ.get("DETECT_MODEL", "yolov8n.pt").strip() or "yolov8n.pt"
+    self.conf = float(os.environ.get("DETECT_CONF", "0.25"))
+    self.max_det = int(os.environ.get("DETECT_MAX_DET", "10"))
+    self.class_id = int(os.environ.get("DETECT_CLASS_ID", "14"))
+    self.error: Optional[str] = None
+    if not self.enabled:
+      self.model = None
+      return
+    try:
+      from ultralytics import YOLO
+      self.model = YOLO(self.model_id)
+    except Exception as e:
+      self.model = None
+      self.enabled = False
+      self.error = str(e)
+
+  def detect(self, img: Image.Image) -> List[DetectBox]:
+    if not self.enabled or self.model is None:
+      return []
+    res = self.model.predict(img, conf=self.conf, max_det=self.max_det, verbose=False)
+    if not res:
+      return []
+    r0 = res[0]
+    boxes = getattr(r0, "boxes", None)
+    if boxes is None:
+      return []
+    xyxy = getattr(boxes, "xyxy", None)
+    conf = getattr(boxes, "conf", None)
+    cls = getattr(boxes, "cls", None)
+    if xyxy is None or conf is None or cls is None:
+      return []
+    out: List[DetectBox] = []
+    xyxy_list = xyxy.detach().cpu().tolist()
+    conf_list = conf.detach().cpu().tolist()
+    cls_list = cls.detach().cpu().tolist()
+    for b, s, c in zip(xyxy_list, conf_list, cls_list):
+      if int(c) != int(self.class_id):
+        continue
+      x1, y1, x2, y2 = [float(v) for v in b]
+      out.append(DetectBox(x1=x1, y1=y1, x2=x2, y2=y2, score=float(s)))
+    return out
+
+
+def _merge_predictions(list_of_preds: List[List[dict]], topk: int) -> List[dict]:
+  best = {}
+  for preds in list_of_preds:
+    for p in preds:
+      if not isinstance(p, dict):
+        continue
+      key = str(p.get("nameScientific") or p.get("nameZh") or "").strip()
+      if not key:
+        continue
+      score = float(p.get("score") or 0.0)
+      prev = best.get(key)
+      if prev is None or score > float(prev.get("score") or 0.0):
+        best[key] = {"nameZh": p.get("nameZh"), "nameScientific": p.get("nameScientific"), "score": score}
+  merged = list(best.values())
+  merged.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
+  return merged[: max(1, int(topk))]
+
+
+def _crop_box(img: Image.Image, box: DetectBox, pad: float) -> Image.Image:
+  w, h = img.size
+  x1 = float(box.x1)
+  y1 = float(box.y1)
+  x2 = float(box.x2)
+  y2 = float(box.y2)
+  cx = (x1 + x2) / 2
+  cy = (y1 + y2) / 2
+  bw = max(2.0, x2 - x1)
+  bh = max(2.0, y2 - y1)
+  bw *= float(pad)
+  bh *= float(pad)
+  nx1 = max(0, int(cx - bw / 2))
+  ny1 = max(0, int(cy - bh / 2))
+  nx2 = min(w, int(cx + bw / 2))
+  ny2 = min(h, int(cy + bh / 2))
+  if nx2 <= nx1 + 2 or ny2 <= ny1 + 2:
+    return img
+  return img.crop((nx1, ny1, nx2, ny2))
+
+
+def _fallback_square_crops(img: Image.Image) -> List[Image.Image]:
+  w, h = img.size
+  side = max(32, int(min(w, h) * 0.6))
+  x0 = 0
+  y0 = 0
+  x1 = max(0, w - side)
+  y1 = max(0, h - side)
+  xc = max(0, int((w - side) / 2))
+  yc = max(0, int((h - side) / 2))
+  crops = [
+    img.crop((x0, y0, x0 + side, y0 + side)),
+    img.crop((x1, y0, x1 + side, y0 + side)),
+    img.crop((x0, y1, x0 + side, y1 + side)),
+    img.crop((x1, y1, x1 + side, y1 + side)),
+    img.crop((xc, yc, xc + side, yc + side)),
+  ]
+  return crops
+
 
 app = FastAPI()
 svc: Optional[BioClipService] = None
+det: Optional[DetectorService] = None
 svc_error: Optional[str] = None
 
 
 @app.on_event("startup")
 def _startup():
-  global svc, svc_error
+  global svc, det, svc_error
   svc = None
+  det = None
   svc_error = None
 
   def _load():
-    global svc, svc_error
+    global svc, det, svc_error
     try:
       svc = BioClipService()
+      det = DetectorService()
       svc_error = None
     except Exception as e:
       svc = None
+      det = None
       svc_error = str(e)
 
   t = threading.Thread(target=_load, daemon=True)
@@ -183,6 +304,9 @@ def health():
     "model": svc.model_id,
     "device": svc.device,
     "labels": len(svc.labels),
+    "detectEnabled": bool(det and det.enabled),
+    "detectModel": det.model_id if det else None,
+    "detectError": det.error if det else None,
   }
 
 
@@ -193,7 +317,30 @@ async def identify(image: UploadFile = File(...)):
 
   jpg = await image.read()
   try:
-    preds = svc.identify_jpeg(jpg, topk=int(os.environ.get("TOPK", "5")))
+    topk = int(os.environ.get("TOPK", "5"))
+    img = Image.open(io.BytesIO(jpg)).convert("RGB")
+
+    boxes: List[DetectBox] = det.detect(img) if det is not None else []
+    chosen: Optional[DetectBox] = None
+    if boxes:
+      chosen = max(boxes, key=lambda b: (max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1)) * b.score))
+
+    preds_list: List[List[dict]] = []
+    if chosen is not None:
+      pads = [1.25, 1.6]
+      crops = [_crop_box(img, chosen, p) for p in pads]
+      crops.insert(0, img)
+      for c in crops[: max(1, int(os.environ.get("DETECT_MAX_CROPS", "3")))]:
+        preds_list.append(svc.identify_image(c, topk=topk))
+      mode = "detect"
+    else:
+      preds_list.append(svc.identify_image(img, topk=topk))
+      if os.environ.get("DETECT_FALLBACK_CROPS", "1").strip().lower() not in ("0", "false", "no", "off"):
+        for c in _fallback_square_crops(img)[: max(0, int(os.environ.get("DETECT_FALLBACK_MAX", "4")))]:
+          preds_list.append(svc.identify_image(c, topk=topk))
+      mode = "fallback"
+
+    preds = _merge_predictions(preds_list, topk=topk)
     return {
       "success": True,
       "provider": "bioclip",
@@ -201,7 +348,11 @@ async def identify(image: UploadFile = File(...)):
       "labelsCount": len(svc.labels),
       "promptCount": len(svc.prompt_templates),
       "predictions": preds,
+      "roi": {
+        "mode": mode,
+        "boxes": [{"x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2, "score": b.score} for b in boxes[:10]],
+        "chosen": {"x1": chosen.x1, "y1": chosen.y1, "x2": chosen.x2, "y2": chosen.y2, "score": chosen.score} if chosen else None,
+      },
     }
   except Exception as e:
     return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
-

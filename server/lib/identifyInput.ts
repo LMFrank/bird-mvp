@@ -3,6 +3,15 @@ import path from 'node:path'
 import { ResizeFit, Transformer } from '@napi-rs/image'
 import { getRuntimeSetting } from './settings.js'
 
+function asBool(v: unknown, fallback: boolean) {
+  if (typeof v === 'boolean') return v
+  if (typeof v !== 'string') return fallback
+  const s = v.trim().toLowerCase()
+  if (s === '1' || s === 'true' || s === 'yes' || s === 'on') return true
+  if (s === '0' || s === 'false' || s === 'no' || s === 'off') return false
+  return fallback
+}
+
 function clampInt(v: unknown, fallback: number, min: number, max: number) {
   if (v == null) return fallback
   if (typeof v === 'string' && !v.trim()) return fallback
@@ -33,6 +42,7 @@ function parseCropScales(v: unknown, fallback: number) {
 
 export function getIdentifyInputOptionsFromEnv() {
   const envOrSetting = (k: string) => getRuntimeSetting(k) ?? (process.env as Record<string, unknown>)[k]
+  const roiDetect = asBool(envOrSetting('IDENTIFY_ROI_DETECT'), true)
   const cropScale = clampFloat(envOrSetting('IDENTIFY_CROP_SCALE'), 0.6, 0.35, 0.9)
   const cropScales = parseCropScales(envOrSetting('IDENTIFY_CROP_SCALES'), cropScale)
   const cropScalesSingle = parseCropScales(envOrSetting('IDENTIFY_CROP_SCALES_SINGLE'), cropScales[0]!)
@@ -40,11 +50,12 @@ export function getIdentifyInputOptionsFromEnv() {
   return {
     maxSize: clampInt(envOrSetting('IDENTIFY_MAX_SIZE'), 4096, 512, 8192),
     quality: clampInt(envOrSetting('IDENTIFY_JPEG_QUALITY'), 90, 30, 100),
-    cropsSingle: clampInt(envOrSetting('IDENTIFY_CROPS_SINGLE'), 5, 1, 9),
-    cropsBatch: clampInt(envOrSetting('IDENTIFY_CROPS_BATCH'), 1, 1, 9),
+    cropsSingle: roiDetect ? 1 : clampInt(envOrSetting('IDENTIFY_CROPS_SINGLE'), 5, 1, 9),
+    cropsBatch: roiDetect ? 1 : clampInt(envOrSetting('IDENTIFY_CROPS_BATCH'), 1, 1, 9),
     cropScale,
     cropScalesSingle,
     cropScalesBatch,
+    roiDetect,
   }
 }
 

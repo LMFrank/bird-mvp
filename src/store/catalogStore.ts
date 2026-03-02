@@ -5,6 +5,8 @@ import {
   type AiSpecies,
   type IdentifyJob,
   addLibrary,
+  backfillAesthetic,
+  backfillExif,
   cancelJob,
   getJob,
   getPhoto,
@@ -25,6 +27,7 @@ type Filters = {
   tag: string
   q: string
   aiZh: string
+  sort: 'time' | 'recommend'
 }
 
 export type DisplayLang = 'zh_CN' | 'zh_TW' | 'en' | 'sci'
@@ -105,7 +108,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   identifying: false,
   identifyJob: null,
   error: null,
-  filters: { status: 'all', ratingMin: 0, tag: '', q: '', aiZh: '' },
+  filters: { status: 'all', ratingMin: 0, tag: '', q: '', aiZh: '', sort: 'recommend' },
   selectedPhotoId: null,
   selectedPhoto: null,
   photoIdentifyingId: null,
@@ -213,11 +216,44 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
         tag: f.tag,
         q: f.q,
         aiZh: f.aiZh,
+        sort: f.sort,
         offset,
         limit: PAGE_SIZE,
       })
       if (seq !== photosQuerySeq) return
-      set({ photos: [...get().photos, ...data.photos], total: data.total })
+      const nextPhotos = [...get().photos, ...data.photos]
+      set({ photos: nextPhotos, total: data.total })
+      const missing = nextPhotos
+        .filter((p) => p.aesthetic_score == null || (typeof p.aesthetic_mtime_ms === 'number' && p.aesthetic_mtime_ms !== p.mtime_ms))
+        .slice(0, 8)
+        .map((p) => p.id)
+      if (missing.length) {
+        try {
+          const r = await backfillAesthetic({ libraryId: id, photoIds: missing })
+          const patch = new Map(r.updated.map((u) => [u.id, u]))
+          if (patch.size) {
+            set({
+              photos: get().photos.map((p) => {
+                const u = patch.get(p.id)
+                return u
+                  ? { ...p, aesthetic_score: u.aesthetic_score, aesthetic_score_cal: u.aesthetic_score_cal, aesthetic_updated_at: u.aesthetic_updated_at }
+                  : p
+              }),
+              selectedPhoto:
+                get().selectedPhoto && patch.has(get().selectedPhoto!.id)
+                  ? {
+                      ...get().selectedPhoto!,
+                      aesthetic_score: patch.get(get().selectedPhoto!.id)!.aesthetic_score,
+                      aesthetic_score_cal: patch.get(get().selectedPhoto!.id)!.aesthetic_score_cal,
+                      aesthetic_updated_at: patch.get(get().selectedPhoto!.id)!.aesthetic_updated_at,
+                    }
+                  : get().selectedPhoto,
+            })
+          }
+        } catch {
+          void 0
+        }
+      }
     } catch (e: unknown) {
       if (seq !== photosQuerySeq) return
       set({ error: errMsg(e, '加载照片失败') })
@@ -252,6 +288,52 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     try {
       const data = await getPhoto(id)
       set({ selectedPhoto: data.photo })
+      const libId = get().selectedLibraryId
+      if (libId) {
+        const p = data.photo
+        const needs =
+          p.aesthetic_score == null || (typeof p.aesthetic_mtime_ms === 'number' && typeof p.mtime_ms === 'number' && p.aesthetic_mtime_ms !== p.mtime_ms)
+        if (needs) {
+          try {
+            const r = await backfillAesthetic({ libraryId: libId, photoIds: [id] })
+            const u = r.updated?.[0]
+            if (u) {
+              set({
+                photos: get().photos.map((x) =>
+                  x.id === id ? { ...x, aesthetic_score: u.aesthetic_score, aesthetic_score_cal: u.aesthetic_score_cal, aesthetic_updated_at: u.aesthetic_updated_at } : x,
+                ),
+                selectedPhoto:
+                  get().selectedPhotoId === id && get().selectedPhoto
+                    ? { ...get().selectedPhoto!, aesthetic_score: u.aesthetic_score, aesthetic_score_cal: u.aesthetic_score_cal, aesthetic_updated_at: u.aesthetic_updated_at }
+                    : get().selectedPhoto,
+              })
+            }
+          } catch {
+            void 0
+          }
+        }
+        const exifNeeds = !p.exif || !p.taken_at || !p.width || !p.height
+        if (exifNeeds) {
+          try {
+            const r = await backfillExif({ libraryId: libId, photoIds: [id] })
+            const u = r.updated?.[0]
+            if (u) {
+              set({
+                selectedPhoto:
+                  get().selectedPhotoId === id && get().selectedPhoto
+                    ? { ...get().selectedPhoto!, exif: u.exif, taken_at: u.taken_at, width: u.width, height: u.height }
+                    : get().selectedPhoto,
+              })
+            }
+            const f = Array.isArray(r.failed) ? r.failed.find((x) => x && x.id === id) : null
+            if (f && !u) {
+              set({ error: `EXIF 提取失败：${f.error}` })
+            }
+          } catch {
+            void 0
+          }
+        }
+      }
     } catch {
       set({ selectedPhoto: null })
     }
@@ -275,13 +357,28 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     set({ photoIdentifyingId: id, error: null })
     try {
       const data = await identifyPhoto(id)
+      const aes = data.aesthetic
       set({
-        photos: get().photos.map((p) => (p.id === id ? { ...p, ai: data.ai } : p)),
+        photos: get().photos.map((p) =>
+          p.id === id
+            ? { ...p, ai: data.ai, aesthetic_score: aes?.score ?? p.aesthetic_score, aesthetic_updated_at: aes?.updatedAt ?? p.aesthetic_updated_at }
+            : p,
+        ),
         selectedPhoto:
           get().selectedPhotoId === id && get().selectedPhoto
             ? { ...get().selectedPhoto!, ai: data.ai }
             : get().selectedPhoto,
       })
+      if (get().selectedPhotoId === id && get().selectedPhoto) {
+        set({
+          selectedPhoto: {
+            ...get().selectedPhoto!,
+            ai: data.ai,
+            aesthetic_score: aes?.score ?? get().selectedPhoto!.aesthetic_score,
+            aesthetic_updated_at: aes?.updatedAt ?? get().selectedPhoto!.aesthetic_updated_at,
+          },
+        })
+      }
     } catch (e: unknown) {
       set({ error: errMsg(e, '识别失败') })
     } finally {

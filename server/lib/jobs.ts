@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs/promises'
 import { getDb, nowIso } from './catalog.js'
 import { identifyWithAi, identifyWithLlmFallback, mergeAiResults, shouldTriggerLlmFallback, upsertPhotoAi } from './ai.js'
 import { buildIdentifyJpegsFromPathCached, getIdentifyInputOptionsFromEnv } from './identifyInput.js'
+import { computeAestheticScoreFromPath } from './aesthetic.js'
 import { getJobRow, insertJob, requestCancel, updateJobRow } from '../repos/jobRepo.js'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
@@ -168,6 +170,14 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
     const db = getDb()
     const overwrite = opts.overwrite === true
     const limit = Number.isFinite(opts.limit) ? Math.max(0, Number(opts.limit)) : 0
+    const selectAes = db.prepare('SELECT aesthetic_mtime_ms as m FROM photo_meta WHERE photo_id = ?')
+    const updateAes = db.prepare(
+      `
+      UPDATE photo_meta
+      SET aesthetic_score = ?, aesthetic_mtime_ms = ?, aesthetic_updated_at = ?
+      WHERE photo_id = ?
+      `,
+    )
 
     const rows = db
       .prepare(
@@ -201,6 +211,18 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
       persistJob(j)
       try {
         console.log(`[Job] Identifying Photo #${r.id}: ${r.abs_path}`)
+        try {
+          const st = await fs.stat(r.abs_path)
+          const mtimeMs = Math.trunc(st.mtimeMs)
+          const row = selectAes.get(r.id) as { m: number | null } | undefined
+          const prev = typeof row?.m === 'number' && Number.isFinite(row.m) ? Math.trunc(row.m) : null
+          if (prev === null || prev !== mtimeMs) {
+            const score = await computeAestheticScoreFromPath(r.abs_path)
+            updateAes.run(score, mtimeMs, nowIso(), r.id)
+          }
+        } catch {
+          void 0
+        }
         const inputs = await buildIdentifyJpegsFromPathCached(r.id, r.abs_path, {
           maxSize: optsIdentify.maxSize,
           quality: optsIdentify.quality,

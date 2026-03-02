@@ -27,14 +27,24 @@ export default function FilterBar() {
           <option value="none">未处理</option>
         </select>
 
-        <button
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
-          onClick={() => setFilters({ ratingMin: (filters.ratingMin + 1) % 6 })}
-          title="最低星级筛选"
-        >
-          <Star className="h-4 w-4" />
-          ≥ {filters.ratingMin}
-        </button>
+        <div className="flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-2 text-sm">
+          <Star className="h-4 w-4 text-zinc-600" />
+          <select
+            className="h-9 bg-transparent pr-2 outline-none"
+            value={filters.ratingMin}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              if (Number.isFinite(v) && v >= 0 && v <= 5) setFilters({ ratingMin: v })
+            }}
+            title="最低星级筛选"
+          >
+            {[0, 1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                ≥ {n}★
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />

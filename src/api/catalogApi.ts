@@ -14,6 +14,26 @@ export type Photo = {
   status: 'none' | 'keep' | 'reject'
   color: string
   updated_at: string
+  aesthetic_score?: number | null
+  aesthetic_mtime_ms?: number | null
+  aesthetic_updated_at?: string | null
+  aesthetic_score_cal?: number | null
+  width?: number | null
+  height?: number | null
+  taken_at?: string | null
+  exif?: {
+    cameraMake?: string
+    cameraModel?: string
+    lensModel?: string
+    focalLengthMm?: number
+    aperture?: number
+    shutter?: string
+    iso?: number
+    exposureComp?: number
+    takenAt?: string
+    width?: number
+    height?: number
+  } | null
   tags?: string[]
   aiTop1?: { nameZh?: string; nameScientific?: string; score: number } | null
   ai?: {
@@ -104,6 +124,7 @@ export async function listPhotos(params: {
   tag: string
   q: string
   aiZh?: string
+  sort?: 'time' | 'recommend'
   offset: number
   limit: number
 }) {
@@ -114,6 +135,7 @@ export async function listPhotos(params: {
   if (params.tag) qs.set('tag', params.tag)
   if (params.q) qs.set('q', params.q)
   if (params.aiZh) qs.set('aiZh', params.aiZh)
+  if (params.sort) qs.set('sort', params.sort)
   qs.set('offset', String(params.offset))
   qs.set('limit', String(params.limit))
   const r = await api<ApiOk<{ total: number; offset: number; limit: number; photos: unknown[] }>>(
@@ -154,9 +176,34 @@ export async function patchPhoto(
 }
 
 export async function identifyPhoto(id: number) {
-  return api<ApiOk<{ ai: NonNullable<Photo['ai']> }>>(`/api/photos/${id}/identify`, {
+  return api<ApiOk<{ ai: NonNullable<Photo['ai']>; aesthetic: { score: number | null; updatedAt: string | null } | null }>>(
+    `/api/photos/${id}/identify`,
+    {
     method: 'POST',
-  })
+    },
+  )
+}
+
+export async function backfillAesthetic(params: { libraryId: number; photoIds: number[] }) {
+  return api<ApiOk<{ updated: { id: number; aesthetic_score: number; aesthetic_score_cal: number | null; aesthetic_updated_at: string }[] }>>(
+    `/api/photos/aesthetic/backfill`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+export async function backfillExif(params: { libraryId: number; photoIds: number[] }) {
+  return api<ApiOk<{ updated: { id: number; exif: NonNullable<Photo['exif']>; taken_at: string | null; width: number | null; height: number | null }[]; failed: { id: number; error: string }[] }>>(
+    `/api/photos/exif/backfill`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+  )
 }
 
 export async function clearPhotoAi(id: number) {

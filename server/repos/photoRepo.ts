@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
 export type PhotoStatusFilter = 'all' | 'none' | 'keep' | 'reject'
 export type PhotoAiModeFilter = 'top1' | 'any'
+export type PhotoSort = 'time' | 'recommend'
 
 export type ListPhotosQuery = {
   libraryId: number
@@ -12,6 +13,7 @@ export type ListPhotosQuery = {
   aiZh: string
   aiMode: PhotoAiModeFilter
   aiMinScore: number
+  sort: PhotoSort
   offset: number
   limit: number
 }
@@ -65,18 +67,23 @@ export function countListPhotos(db: DatabaseSync, q: ListPhotosQuery): number {
 
 export function listPhotos(db: DatabaseSync, q: ListPhotosQuery) {
   const { whereSql, params } = buildListPhotosWhere(q)
+  const orderBy =
+    q.sort === 'recommend'
+      ? 'ORDER BY COALESCE(m.aesthetic_score, 0) DESC, p.mtime_ms DESC'
+      : 'ORDER BY p.mtime_ms DESC'
   return db
     .prepare(
       `
       SELECT
         p.id, p.rel_path, p.abs_path, p.mtime_ms, p.size,
         m.rating, m.status, m.color, m.updated_at,
+        m.aesthetic_score, m.aesthetic_mtime_ms, m.aesthetic_updated_at,
         ap.name_zh as ai_name_zh, ap.name_scientific as ai_name_scientific, ap.score as ai_score
       FROM photos p
       JOIN photo_meta m ON m.photo_id = p.id
       LEFT JOIN photo_ai_predictions ap ON ap.photo_id = p.id AND ap.rank = 1
       ${whereSql}
-      ORDER BY p.mtime_ms DESC
+      ${orderBy}
       LIMIT ? OFFSET ?
       `,
     )
@@ -90,7 +97,8 @@ export function getPhotoDetail(db: DatabaseSync, id: number) {
       SELECT
         p.id, p.library_id, p.abs_path, p.rel_path, p.fingerprint, p.mtime_ms, p.size,
         p.width, p.height, p.taken_at,
-        m.rating, m.status, m.color, m.updated_at
+        m.rating, m.status, m.color, m.updated_at,
+        m.aesthetic_score, m.aesthetic_mtime_ms, m.aesthetic_updated_at
       FROM photos p
       JOIN photo_meta m ON m.photo_id = p.id
       WHERE p.id = ?
@@ -147,6 +155,87 @@ export function updatePhotoMeta(
   params.push(id)
   db.prepare(`UPDATE photo_meta SET ${fields.join(', ')} WHERE photo_id = ?`).run(...params)
   return true
+}
+
+export function getPhotoAestheticMtimeMs(db: DatabaseSync, id: number): number | null {
+  const row = db
+    .prepare('SELECT aesthetic_mtime_ms as m FROM photo_meta WHERE photo_id = ?')
+    .get(id) as { m: number | null } | undefined
+  return typeof row?.m === 'number' && Number.isFinite(row.m) ? row.m : null
+}
+
+export function updatePhotoAestheticScore(
+  db: DatabaseSync,
+  id: number,
+  patch: { score: number; mtimeMs: number; now: string },
+) {
+  const s = Number(patch.score)
+  const m = Math.trunc(patch.mtimeMs)
+  const now = String(patch.now)
+  db.prepare(
+    `
+    UPDATE photo_meta
+    SET aesthetic_score = ?, aesthetic_mtime_ms = ?, aesthetic_updated_at = ?
+    WHERE photo_id = ?
+    `,
+  ).run(Number.isFinite(s) ? s : null, Number.isFinite(m) ? m : null, now, id)
+}
+
+export function getPhotoExifCache(db: DatabaseSync, id: number): { exifJson: string | null; exifMtimeMs: number | null } {
+  try {
+    const row = db
+      .prepare('SELECT exif_json as j, exif_mtime_ms as m FROM photo_meta WHERE photo_id = ?')
+      .get(id) as { j: string | null; m: number | null } | undefined
+    const exifJson = typeof row?.j === 'string' ? row.j : null
+    const exifMtimeMs = typeof row?.m === 'number' && Number.isFinite(row.m) ? row.m : null
+    return { exifJson, exifMtimeMs }
+  } catch {
+    return { exifJson: null, exifMtimeMs: null }
+  }
+}
+
+export function updatePhotoExifCache(
+  db: DatabaseSync,
+  id: number,
+  patch: { exifJson: string; mtimeMs: number; now: string },
+) {
+  const m = Math.trunc(patch.mtimeMs)
+  const now = String(patch.now)
+  try {
+    db.prepare(
+      `
+      UPDATE photo_meta
+      SET exif_json = ?, exif_mtime_ms = ?, exif_updated_at = ?
+      WHERE photo_id = ?
+      `,
+    ).run(String(patch.exifJson), Number.isFinite(m) ? m : null, now, id)
+  } catch {
+    void 0
+  }
+}
+
+export function updatePhotoExifBasics(
+  db: DatabaseSync,
+  id: number,
+  patch: { width?: number | null; height?: number | null; takenAt?: string | null },
+) {
+  const fields: string[] = []
+  const params: SQLInputValue[] = []
+  if (typeof patch.width === 'number' && Number.isFinite(patch.width) && patch.width > 0) {
+    fields.push('width = ?')
+    params.push(Math.trunc(patch.width))
+  }
+  if (typeof patch.height === 'number' && Number.isFinite(patch.height) && patch.height > 0) {
+    fields.push('height = ?')
+    params.push(Math.trunc(patch.height))
+  }
+  if (typeof patch.takenAt === 'string' && patch.takenAt.trim()) {
+    fields.push('taken_at = ?')
+    params.push(patch.takenAt.trim())
+  }
+  if (!fields.length) return
+  params.push(id)
+  db.prepare(`UPDATE photos SET ${fields.join(', ')} WHERE id = ?`).run(...params)
 }
 
 export function replacePhotoTags(db: DatabaseSync, id: number, tags: string[], now: string) {

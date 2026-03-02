@@ -5,6 +5,8 @@ import { asyncHandler } from '../lib/asyncHandler.js'
 import { ApiError, notFound } from '../lib/apiError.js'
 import { asInt, asNumber, asString, oneOf, requiredInt } from '../lib/validate.js'
 import {
+  backfillAestheticForPhotosService,
+  backfillExifForPhotosService,
   deletePhotoAiService,
   getPhotoService,
   getPhotoThumbPathService,
@@ -26,6 +28,7 @@ router.get('/', (req: Request, res: Response) => {
   const aiZh = asString(req.query.aiZh, { default: '' })
   const aiMode = oneOf(asString(req.query.aiMode, { default: 'top1' }), ['top1', 'any'] as const, 'top1')
   const aiMinScore = asNumber(req.query.aiMinScore, { default: 0, min: 0 })
+  const sort = oneOf(asString(req.query.sort, { default: 'time' }), ['time', 'recommend'] as const, 'time')
   const offset = Math.max(0, asInt(req.query.offset, { default: 0, min: 0 }))
   const limit = Math.min(200, Math.max(1, asInt(req.query.limit, { default: 60, min: 1, max: 200 })))
 
@@ -38,6 +41,7 @@ router.get('/', (req: Request, res: Response) => {
     aiZh,
     aiMode: aiMode === 'any' ? 'any' : 'top1',
     aiMinScore,
+    sort,
     offset,
     limit,
   }
@@ -70,9 +74,9 @@ router.post('/:id/identify', asyncHandler(async (req: Request, res: Response) =>
   const id = requiredInt('id', req.params.id)
 
   try {
-    const ai = await identifyPhotoService(id)
-    if (!ai) throw notFound('photo not found')
-    res.json({ success: true, ai })
+    const r = await identifyPhotoService(id)
+    if (!r) throw notFound('photo not found')
+    res.json({ success: true, ...r })
   } catch (e: unknown) {
     if (e instanceof ApiError) throw e
     const msg = e instanceof Error && e.message ? e.message : 'identify failed'
@@ -92,5 +96,39 @@ router.patch('/:id', (req: Request, res: Response) => {
   if (!updated) throw notFound('photo not found')
   res.json({ success: true, photo: updated })
 })
+
+router.post(
+  '/aesthetic/backfill',
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { libraryId?: unknown; photoIds?: unknown }
+    const libraryId = requiredInt('libraryId', body.libraryId)
+    const ids = Array.isArray(body.photoIds) ? body.photoIds : []
+    const photoIds = ids.map((v) => Math.trunc(Number(v))).filter((n) => Number.isFinite(n) && n > 0)
+    try {
+      const r = await backfillAestheticForPhotosService({ libraryId, photoIds })
+      res.json({ success: true, ...r })
+    } catch (e: unknown) {
+      const msg = e instanceof Error && e.message ? e.message : 'backfill failed'
+      throw new ApiError({ status: 500, code: 'AESTHETIC_BACKFILL_FAILED', message: msg })
+    }
+  }),
+)
+
+router.post(
+  '/exif/backfill',
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { libraryId?: unknown; photoIds?: unknown }
+    const libraryId = requiredInt('libraryId', body.libraryId)
+    const ids = Array.isArray(body.photoIds) ? body.photoIds : []
+    const photoIds = ids.map((v) => Math.trunc(Number(v))).filter((n) => Number.isFinite(n) && n > 0)
+    try {
+      const r = await backfillExifForPhotosService({ libraryId, photoIds })
+      res.json({ success: true, ...r })
+    } catch (e: unknown) {
+      const msg = e instanceof Error && e.message ? e.message : 'backfill failed'
+      throw new ApiError({ status: 500, code: 'EXIF_BACKFILL_FAILED', message: msg })
+    }
+  }),
+)
 
 export default router
