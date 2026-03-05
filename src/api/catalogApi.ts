@@ -175,6 +175,17 @@ export async function patchPhoto(
   })
 }
 
+export async function batchPatchPhotos(
+  ids: number[],
+  patch: Partial<Pick<Photo, 'rating' | 'status' | 'color'>> & { tags?: string[] },
+) {
+  return api<ApiOk<{ updated: number[] }>>('/api/photos/batch', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, patch }),
+  })
+}
+
 export async function identifyPhoto(id: number) {
   return api<ApiOk<{ ai: NonNullable<Photo['ai']>; aesthetic: { score: number | null; updatedAt: string | null } | null }>>(
     `/api/photos/${id}/identify`,
@@ -297,6 +308,10 @@ export type AppSettings = {
 
 export async function getSettings() {
   return api<ApiOk<AppSettings>>('/api/settings')
+}
+
+export async function checkAiHealth() {
+  return api<ApiOk<{ ai: unknown }>>('/api/ai/health')
 }
 
 export type AppSettingsPatch = {

@@ -82,4 +82,11 @@ export function deleteLibraryAi(db: DatabaseSync, libraryId: number) {
     WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)
     `,
   ).run(libraryId)
+  db.prepare(
+    `
+    UPDATE photo_meta
+    SET aesthetic_score = NULL, aesthetic_mtime_ms = NULL, aesthetic_updated_at = NULL
+    WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)
+    `,
+  ).run(libraryId)
 }

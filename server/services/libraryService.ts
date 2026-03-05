@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { collectImages } from '../lib/scan.js'
 import { computeFingerprint } from '../lib/fingerprint.js'
-import { computeAestheticScoreFromPath } from '../lib/aesthetic.js'
 import { ensurePhotoMeta, getDb, nowIso } from '../lib/catalog.js'
 import { setRuntimeSetting } from '../lib/settings.js'
 import { createIdentifyLibraryJob } from '../lib/jobs.js'
@@ -94,13 +93,6 @@ export async function scanLibraryService(libraryId: number) {
     `,
   )
   const selectAes = db.prepare('SELECT aesthetic_mtime_ms as m, aesthetic_score as s FROM photo_meta WHERE photo_id = ?')
-  const updateAes = db.prepare(
-    `
-    UPDATE photo_meta
-    SET aesthetic_score = ?, aesthetic_mtime_ms = ?, aesthetic_updated_at = ?
-    WHERE photo_id = ?
-    `,
-  )
   const now = nowIso()
   const scanned = new Set<string>()
   const normAbs = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p))
@@ -150,15 +142,8 @@ export async function scanLibraryService(libraryId: number) {
         const row = selectAes.get(photoId) as { m: number | null; s: number | null } | undefined
         const prev = typeof row?.m === 'number' && Number.isFinite(row.m) ? Math.trunc(row.m) : null
         const curr = Math.trunc(st.mtimeMs)
-        let score: number | null = typeof row?.s === 'number' && Number.isFinite(row.s) ? row.s : null
-        if (prev === null || prev !== curr || score === null) {
-          try {
-            score = await computeAestheticScoreFromPath(img.absPath)
-            updateAes.run(score, curr, nowIso(), photoId)
-          } catch {
-            score = null
-          }
-        }
+        const score: number | null =
+          prev !== null && prev === curr && typeof row?.s === 'number' && Number.isFinite(row.s) ? row.s : null
         if (score !== null) {
           const b = Math.min(100, Math.max(0, Math.trunc(score)))
           bins[b] += 1
@@ -241,4 +226,7 @@ export function createIdentifyLibraryJobService(opts: {
 export function deleteLibraryAiService(libraryId: number) {
   const db = getDb()
   deleteLibraryAi(db, libraryId)
+  setRuntimeSetting(`AESTHETIC_P10_LIBRARY_${libraryId}`, null)
+  setRuntimeSetting(`AESTHETIC_P90_LIBRARY_${libraryId}`, null)
+  setRuntimeSetting(`AESTHETIC_CAL_COUNT_LIBRARY_${libraryId}`, null)
 }

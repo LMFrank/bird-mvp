@@ -257,8 +257,11 @@ export async function computeAestheticScoreFromPath(absImagePath: string) {
   const comp = clamp01(0.6 * centerRatioScore + 0.4 * centroidScore)
 
   const final01 = clamp01(0.75 * tech + 0.25 * comp)
-  const gammaRaw = Number(process.env.AESTHETIC_GAMMA ?? 0.55)
-  const gamma = Number.isFinite(gammaRaw) && gammaRaw > 0.05 && gammaRaw < 5 ? gammaRaw : 0.55
+  // Tuned gamma for bird photography:
+  // Bird photos often have blurred backgrounds (low edge energy), so we use a lower gamma
+  // to boost scores in the mid-range.
+  const gammaRaw = Number(process.env.AESTHETIC_GAMMA ?? 0.45)
+  const gamma = Number.isFinite(gammaRaw) && gammaRaw > 0.05 && gammaRaw < 5 ? gammaRaw : 0.45
   const mapped01 = clamp01(Math.pow(final01, gamma))
   const score = Math.round(mapped01 * 1000) / 10
   return score

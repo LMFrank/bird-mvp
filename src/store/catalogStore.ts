@@ -15,6 +15,7 @@ import {
   listAiSpecies,
   listPhotos,
   patchPhoto,
+  batchPatchPhotos,
   scanLibrary,
   startIdentifyLibrary,
   clearPhotoAi,
@@ -55,6 +56,7 @@ type CatalogState = {
   error: string | null
   filters: Filters
   selectedPhotoId: number | null
+  selectedPhotoIds: Set<number>
   selectedPhoto: Photo | null
   photoIdentifyingId: number | null
   photoClearingId: number | null
@@ -69,8 +71,15 @@ type CatalogState = {
   loadMore: () => Promise<void>
   loadAll: () => Promise<void>
   selectPhoto: (id: number | null) => Promise<void>
+  toggleSelect: (id: number, multi?: boolean, range?: boolean) => void
+  selectAll: () => void
+  clearSelection: () => void
+  selectByScore: (min: number, max: number) => void
   applyPhotoPatch: (
     id: number,
+    patch: Partial<Pick<Photo, 'rating' | 'status' | 'color'>> & { tags?: string[] },
+  ) => Promise<void>
+  applyBatchPatch: (
     patch: Partial<Pick<Photo, 'rating' | 'status' | 'color'>> & { tags?: string[] },
   ) => Promise<void>
 
@@ -80,6 +89,8 @@ type CatalogState = {
   startIdentifyAll: (opts?: { overwrite?: boolean }) => Promise<void>
   cancelIdentifyAll: () => Promise<void>
   clearIdentifyAll: () => Promise<void>
+  checkAiHealth: () => Promise<void>
+  updatePhotos: (updates: Map<number, Partial<Photo>>) => void
 }
 
 const PAGE_SIZE = 200
@@ -110,6 +121,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   error: null,
   filters: { status: 'all', ratingMin: 0, tag: '', q: '', aiZh: '', sort: 'recommend' },
   selectedPhotoId: null,
+  selectedPhotoIds: new Set(),
   selectedPhoto: null,
   photoIdentifyingId: null,
   photoClearingId: null,
@@ -156,6 +168,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       identifyJob: null,
       identifying: false,
       selectedPhotoId: null,
+      selectedPhotoIds: new Set(),
       selectedPhoto: null,
     })
     await get().loadAiSpecies()
@@ -183,7 +196,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     set({ scanning: true, error: null })
     try {
       await scanLibrary(id)
-      set({ photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
+      set({ photos: [], total: 0, selectedPhotoId: null, selectedPhotoIds: new Set(), selectedPhoto: null })
       await get().loadMore()
     } catch (e: unknown) {
       set({ error: errMsg(e, '扫描失败') })
@@ -194,7 +207,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
 
   setFilters: async (patch: Partial<Filters>) => {
     invalidatePhotosQuery()
-    set({ filters: { ...get().filters, ...patch }, photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
+    set({ filters: { ...get().filters, ...patch }, photos: [], total: 0, selectedPhotoId: null, selectedPhotoIds: new Set(), selectedPhoto: null })
     await get().loadMore()
   },
 
@@ -224,7 +237,12 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       const nextPhotos = [...get().photos, ...data.photos]
       set({ photos: nextPhotos, total: data.total })
       const missing = nextPhotos
-        .filter((p) => p.aesthetic_score == null || (typeof p.aesthetic_mtime_ms === 'number' && p.aesthetic_mtime_ms !== p.mtime_ms))
+        .filter(
+          (p) =>
+            p.aiTop1 &&
+            (p.aesthetic_score == null ||
+              (typeof p.aesthetic_mtime_ms === 'number' && p.aesthetic_mtime_ms !== p.mtime_ms)),
+        )
         .slice(0, 8)
         .map((p) => p.id)
       if (missing.length) {
@@ -292,7 +310,11 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       if (libId) {
         const p = data.photo
         const needs =
-          p.aesthetic_score == null || (typeof p.aesthetic_mtime_ms === 'number' && typeof p.mtime_ms === 'number' && p.aesthetic_mtime_ms !== p.mtime_ms)
+          !!p.ai &&
+          (p.aesthetic_score == null ||
+            (typeof p.aesthetic_mtime_ms === 'number' &&
+              typeof p.mtime_ms === 'number' &&
+              p.aesthetic_mtime_ms !== p.mtime_ms))
         if (needs) {
           try {
             const r = await backfillAesthetic({ libraryId: libId, photoIds: [id] })
@@ -352,6 +374,88 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
+  toggleSelect: (id, multi, range) => {
+    const { selectedPhotoIds, selectedPhotoId, photos } = get()
+    const nextSelected = new Set(multi ? selectedPhotoIds : [])
+
+    if (range && selectedPhotoId) {
+      const idx1 = photos.findIndex((p) => p.id === selectedPhotoId)
+      const idx2 = photos.findIndex((p) => p.id === id)
+      if (idx1 !== -1 && idx2 !== -1) {
+        const start = Math.min(idx1, idx2)
+        const end = Math.max(idx1, idx2)
+        for (let i = start; i <= end; i++) {
+          nextSelected.add(photos[i].id)
+        }
+      } else {
+        nextSelected.add(id)
+      }
+    } else {
+      if (multi) {
+        if (nextSelected.has(id)) {
+          nextSelected.delete(id)
+        } else {
+          nextSelected.add(id)
+        }
+      } else {
+        nextSelected.clear()
+        nextSelected.add(id)
+      }
+    }
+
+    set({ selectedPhotoIds: nextSelected })
+    if (id !== selectedPhotoId) {
+      get().selectPhoto(id)
+    }
+  },
+
+  selectAll: () => {
+    const ids = get().photos.map((p) => p.id)
+    set({ selectedPhotoIds: new Set(ids) })
+  },
+
+  clearSelection: () => {
+    set({ selectedPhotoIds: new Set() })
+  },
+
+  selectByScore: (min, max) => {
+    const ids = get().photos
+      .filter((p) => {
+        const s = p.aesthetic_score ?? 0
+        return s >= min && s <= max
+      })
+      .map((p) => p.id)
+    set({ selectedPhotoIds: new Set(ids) })
+  },
+
+  applyBatchPatch: async (patch) => {
+    const ids = Array.from(get().selectedPhotoIds)
+    if (!ids.length) return
+
+    try {
+      const r = await batchPatchPhotos(ids, patch)
+      const updatedIds = new Set(r.updated)
+      set((state) => {
+        const nextPhotos = state.photos.map((p) => {
+          if (updatedIds.has(p.id)) {
+            return { ...p, ...patch }
+          }
+          return p
+        })
+        const nextSelected =
+          state.selectedPhoto && updatedIds.has(state.selectedPhoto.id)
+            ? { ...state.selectedPhoto, ...patch }
+            : state.selectedPhoto
+        return {
+          photos: nextPhotos,
+          selectedPhoto: nextSelected,
+        }
+      })
+    } catch (e: unknown) {
+      set({ error: errMsg(e, '批量更新失败') })
+    }
+  },
+
   runIdentify: async (id) => {
     if (get().photoIdentifyingId === id || get().photoClearingId === id) return
     set({ photoIdentifyingId: id, error: null })
@@ -391,13 +495,31 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     set({ photoClearingId: id, error: null })
     try {
       await clearPhotoAi(id)
-      set({
-        photos: get().photos.map((p) => (p.id === id ? { ...p, ai: null, aiTop1: null } : p)),
+      set((state) => ({
+        photos: state.photos.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                ai: null,
+                aiTop1: null,
+                aesthetic_score: null,
+                aesthetic_score_cal: null,
+                aesthetic_updated_at: null,
+              }
+            : p,
+        ),
         selectedPhoto:
-          get().selectedPhotoId === id && get().selectedPhoto
-            ? { ...get().selectedPhoto!, ai: null, aiTop1: null }
-            : get().selectedPhoto,
-      })
+          state.selectedPhotoId === id && state.selectedPhoto
+            ? {
+                ...state.selectedPhoto!,
+                ai: null,
+                aiTop1: null,
+                aesthetic_score: null,
+                aesthetic_score_cal: null,
+                aesthetic_updated_at: null,
+              }
+            : state.selectedPhoto,
+      }))
     } catch (e: unknown) {
       set({ error: errMsg(e, '清除失败') })
     } finally {
@@ -476,11 +598,38 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     try {
       await clearLibraryAi(id)
       invalidatePhotosQuery()
-      set({ photos: [], total: 0, selectedPhotoId: null, selectedPhoto: null })
+      // Force reset photos to trigger reload and avoid stale data
+      set((state) => ({
+        photos: [],
+        total: 0,
+        selectedPhotoId: null,
+        selectedPhoto: null,
+        aiSpecies: [],
+        // Reset filters if they depend on AI
+        filters: state.filters.aiZh ? { ...state.filters, aiZh: '' } : state.filters
+      }))
       await get().loadAiSpecies()
       await get().loadMore()
     } catch (e: unknown) {
       set({ error: errMsg(e, '清除失败') })
     }
+  },
+
+  checkAiHealth: async () => {
+    // Implement health check logic if needed, currently just a placeholder in store
+    // components can call api.checkAiHealth() directly
+  },
+
+  updatePhotos: (updates) => {
+    set((state) => ({
+      photos: state.photos.map((p) => {
+        const patch = updates.get(p.id)
+        return patch ? { ...p, ...patch } : p
+      }),
+      selectedPhoto:
+        state.selectedPhoto && updates.has(state.selectedPhoto.id)
+          ? { ...state.selectedPhoto, ...updates.get(state.selectedPhoto.id) }
+          : state.selectedPhoto,
+    }))
   },
 }))

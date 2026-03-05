@@ -21,6 +21,7 @@ import {
   updatePhotoExifBasics,
   updatePhotoExifCache,
   updatePhotoMeta,
+  updatePhotosMeta,
 } from '../repos/photoRepo.js'
 
 function clamp01(v: number) {
@@ -285,6 +286,18 @@ export async function identifyPhotoService(id: number) {
     } catch {
       void 0
     }
+  } else {
+    // Force re-calculate aesthetic score if it's missing (e.g. after clearIdentify)
+    // even if mtimeMs matches (because we might have cleared it but kept mtimeMs in photo table)
+    const currentMeta = getPhotoDetail(db, id) as { aesthetic_score?: number | null } | undefined
+    if (currentMeta && (currentMeta.aesthetic_score === null || currentMeta.aesthetic_score === undefined)) {
+       try {
+        const score = await computeAestheticScoreFromPath(absPath)
+        updatePhotoAestheticScore(db, id, { score, mtimeMs, now: nowIso() })
+      } catch {
+        void 0
+      }
+    }
   }
   const after = getPhotoDetail(db, id) as
     | { aesthetic_score?: number | null; aesthetic_mtime_ms?: number | null; aesthetic_updated_at?: string | null }
@@ -331,8 +344,28 @@ export function patchPhotoService(id: number, body: unknown) {
     replacePhotoTags(db, id, normalized, now)
   }
 
-  const updated = getPhotoDetail(db, id)
-  if (!updated) return null
-  const tags = listPhotoTags(db, id)
-  return { ...updated, tags }
+  return getPhotoService(id)
+}
+
+export function batchPatchPhotosService(ids: unknown[], body: unknown) {
+  const db = getDb()
+  const now = nowIso()
+
+  const validIds = ids
+    .map((id) => Number(id))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  
+  if (!validIds.length) return 0
+
+  const b = (body ?? {}) as {
+    rating?: unknown
+    status?: unknown
+  }
+
+  const patch = {
+    rating: typeof b.rating === 'number' ? b.rating : undefined,
+    status: b.status === 'none' || b.status === 'keep' || b.status === 'reject' ? b.status : undefined,
+  } as { rating?: number; status?: 'none' | 'keep' | 'reject'; color?: string }
+
+  return updatePhotosMeta(db, validIds, patch, now)
 }

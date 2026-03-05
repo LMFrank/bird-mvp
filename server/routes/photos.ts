@@ -7,6 +7,7 @@ import { asInt, asNumber, asString, oneOf, requiredInt } from '../lib/validate.j
 import {
   backfillAestheticForPhotosService,
   backfillExifForPhotosService,
+  batchPatchPhotosService,
   deletePhotoAiService,
   getPhotoService,
   getPhotoThumbPathService,
@@ -88,6 +89,15 @@ router.delete('/:id/ai', (req: Request, res: Response) => {
   const id = requiredInt('id', req.params.id)
   deletePhotoAiService(id)
   res.json({ success: true })
+})
+
+router.patch('/batch', (req: Request, res: Response) => {
+  const body = (req.body ?? {}) as { ids?: unknown; rating?: unknown; status?: unknown }
+  if (!Array.isArray(body.ids)) {
+     throw new ApiError({ status: 400, code: 'INVALID_IDS', message: 'ids must be an array' })
+  }
+  const count = batchPatchPhotosService(body.ids, body)
+  res.json({ success: true, count })
 })
 
 router.patch('/:id', (req: Request, res: Response) => {

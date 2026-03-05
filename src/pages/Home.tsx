@@ -1,7 +1,8 @@
 import LibraryBar from '@/components/catalog/LibraryBar'
 import FilterBar from '@/components/catalog/FilterBar'
-import PhotoGrid from '@/components/catalog/PhotoGrid'
+import VirtualPhotoGrid from '@/components/catalog/VirtualPhotoGrid'
 import PhotoInspector from '@/components/catalog/PhotoInspector'
+import BatchActionBar from '@/components/catalog/BatchActionBar'
 import { useCatalogStore } from '@/store/catalogStore'
 
 export default function Home() {
@@ -23,10 +24,11 @@ function CatalogShell() {
       ) : null}
       <div className="flex flex-1">
         <div className="flex-1">
-          <PhotoGrid />
+          <VirtualPhotoGrid />
         </div>
         <PhotoInspector />
       </div>
+      <BatchActionBar />
     </div>
   )
 }

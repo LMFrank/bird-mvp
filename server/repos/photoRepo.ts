@@ -157,6 +157,41 @@ export function updatePhotoMeta(
   return true
 }
 
+export function updatePhotosMeta(
+  db: DatabaseSync,
+  ids: number[],
+  patch: { rating?: number; status?: 'none' | 'keep' | 'reject'; color?: string },
+  now: string,
+): number {
+  if (!ids.length) return 0
+
+  const fields: string[] = []
+  const params: SQLInputValue[] = []
+
+  if (typeof patch.rating === 'number' && Number.isFinite(patch.rating) && patch.rating >= 0 && patch.rating <= 5) {
+    fields.push('rating = ?')
+    params.push(Math.trunc(patch.rating))
+  }
+  if (typeof patch.color === 'string' && patch.color.length <= 32) {
+    fields.push('color = ?')
+    params.push(patch.color)
+  }
+  if (patch.status === 'none' || patch.status === 'keep' || patch.status === 'reject') {
+    fields.push('status = ?')
+    params.push(patch.status)
+  }
+
+  if (!fields.length) return 0
+
+  fields.push('updated_at = ?')
+  params.push(now)
+
+  params.push(...ids)
+  const placeholders = ids.map(() => '?').join(', ')
+  const result = db.prepare(`UPDATE photo_meta SET ${fields.join(', ')} WHERE photo_id IN (${placeholders})`).run(...params)
+  return Number(result.changes ?? 0)
+}
+
 export function getPhotoAestheticMtimeMs(db: DatabaseSync, id: number): number | null {
   const row = db
     .prepare('SELECT aesthetic_mtime_ms as m FROM photo_meta WHERE photo_id = ?')
@@ -250,4 +285,19 @@ export function replacePhotoTags(db: DatabaseSync, id: number, tags: string[], n
 export function deletePhotoAi(db: DatabaseSync, id: number) {
   db.prepare('DELETE FROM photo_ai WHERE photo_id = ?').run(id)
   db.prepare('DELETE FROM photo_ai_predictions WHERE photo_id = ?').run(id)
+  // Clear aesthetic score as well
+  db.prepare('UPDATE photo_meta SET aesthetic_score = NULL, aesthetic_mtime_ms = NULL, aesthetic_updated_at = NULL WHERE photo_id = ?').run(id)
+}
+
+export function clearLibraryAi(db: DatabaseSync, libraryId: number) {
+  // Clear photo_ai
+  db.prepare('DELETE FROM photo_ai WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)').run(libraryId)
+  // Clear photo_ai_predictions
+  db.prepare('DELETE FROM photo_ai_predictions WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)').run(libraryId)
+  // Clear aesthetic scores in photo_meta
+  db.prepare(
+    `UPDATE photo_meta 
+     SET aesthetic_score = NULL, aesthetic_mtime_ms = NULL, aesthetic_updated_at = NULL 
+     WHERE photo_id IN (SELECT id FROM photos WHERE library_id = ?)`
+  ).run(libraryId)
 }

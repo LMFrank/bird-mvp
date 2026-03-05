@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Copy, ExternalLink, XCircle, Trash2 } from 'lucide-react'
-import { thumbUrl } from '@/api/catalogApi'
+import { CheckCircle2, Copy, ExternalLink, XCircle, Trash2, Activity } from 'lucide-react'
+import { thumbUrl, checkAiHealth } from '@/api/catalogApi'
 import { useCatalogStore } from '@/store/catalogStore'
 import TagEditor from '@/components/catalog/TagEditor'
 import { getBirdName } from '@/lib/utils'
@@ -62,6 +62,8 @@ export default function PhotoInspector() {
   } = useCatalogStore()
 
   const [tagHotkeySignal, setTagHotkeySignal] = useState(0)
+  const [aiHealthy, setAiHealthy] = useState<boolean | null>(null)
+  const [checkingHealth, setCheckingHealth] = useState(false)
 
   const idx = useMemo(() => photos.findIndex((p) => p.id === selectedPhotoId), [photos, selectedPhotoId])
   const current = useMemo(() => {
@@ -71,6 +73,8 @@ export default function PhotoInspector() {
 
   const prevId = idx > 0 ? photos[idx - 1]!.id : null
   const nextId = idx >= 0 && idx < photos.length - 1 ? photos[idx + 1]!.id : null
+
+  const ai = current?.ai ?? null
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -106,6 +110,22 @@ export default function PhotoInspector() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [applyPhotoPatch, current, nextId, prevId, selectPhoto])
 
+  useEffect(() => {
+    if (current && !ai && !checkingHealth && aiHealthy === null) {
+      setCheckingHealth(true)
+      checkAiHealth()
+        .then(() => {
+          setAiHealthy(true)
+        })
+        .catch(() => {
+          setAiHealthy(false)
+        })
+        .finally(() => {
+          setCheckingHealth(false)
+        })
+    }
+  }, [current, ai, aiHealthy, checkingHealth])
+
   if (!current) {
     return (
       <div className="hidden h-[calc(100vh-120px)] w-[420px] shrink-0 border-l border-zinc-200 bg-white p-4 lg:block">
@@ -118,7 +138,6 @@ export default function PhotoInspector() {
   }
 
   const tags = current.tags ?? []
-  const ai = current.ai ?? null
   const busyIdentify = photoIdentifyingId === current.id
   const busyClear = photoClearingId === current.id
 
@@ -208,12 +227,41 @@ export default function PhotoInspector() {
                 </button>
               ) : null}
               <button
-                className="inline-flex h-9 items-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50"
-                onClick={() => runIdentify(current.id)}
+                className={`inline-flex h-9 items-center rounded-md border px-3 text-sm hover:bg-zinc-50 ${
+                  aiHealthy === false ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-zinc-300 bg-white'
+                }`}
+                onClick={() => {
+                  if (aiHealthy === false) {
+                    alert('AI 服务尚未就绪，请稍候再试（通常需要 10-30 秒启动）')
+                    // Retry health check
+                    setCheckingHealth(true)
+                    checkAiHealth()
+                      .then(() => setAiHealthy(true))
+                      .catch(() => setAiHealthy(false))
+                      .finally(() => setCheckingHealth(false))
+                    return
+                  }
+                  runIdentify(current.id)
+                }}
                 disabled={busyIdentify || busyClear}
-                title={busyIdentify ? '识别中...' : '使用本地离线模型识别（基于预览图）'}
+                title={
+                  busyIdentify
+                    ? '识别中...'
+                    : aiHealthy === false
+                    ? 'AI 服务未就绪'
+                    : '使用本地离线模型识别（基于预览图）'
+                }
               >
-                {busyIdentify ? '识别中...' : '识别'}
+                {busyIdentify ? (
+                  '识别中...'
+                ) : aiHealthy === false ? (
+                  <>
+                    <Activity className="mr-1 h-3 w-3 animate-pulse" />
+                    未就绪
+                  </>
+                ) : (
+                  '识别'
+                )}
               </button>
             </div>
           </div>
