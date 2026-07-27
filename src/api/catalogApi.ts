@@ -1,6 +1,7 @@
 export type Library = {
   id: number
   root_path: string
+  region_code: string
   created_at: string
 }
 
@@ -21,6 +22,9 @@ export type Photo = {
   width?: number | null
   height?: number | null
   taken_at?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  sequence_id?: number | null
   exif?: {
     cameraMake?: string
     cameraModel?: string
@@ -33,6 +37,8 @@ export type Photo = {
     takenAt?: string
     width?: number
     height?: number
+    latitude?: number
+    longitude?: number
   } | null
   tags?: string[]
   aiTop1?: { nameZh?: string; nameScientific?: string; score: number } | null
@@ -42,6 +48,12 @@ export type Photo = {
     labelsCount?: number
     promptCount?: number
     predictions: { nameZh?: string; nameScientific?: string; score: number }[]
+    labelSet?: string
+    labelsHash?: string
+    pipelineFingerprint?: string
+    decision?: 'accepted' | 'review' | 'unknown'
+    subjectDecision?: 'bird' | 'non_bird' | 'unknown'
+    decisionReason?: string
     fallback?: {
       provider: string
       model: string
@@ -50,6 +62,18 @@ export type Photo = {
       needHumanReview?: boolean
       reason?: string
     }
+  } | null
+  confirmation?: {
+    photoId: number
+    status: 'confirmed' | 'rejected' | 'unknown'
+    subjectType: 'bird' | 'non_bird' | 'unknown'
+    scene: 'wild' | 'captive' | 'unknown'
+    nameZh?: string | null
+    nameScientific?: string | null
+    source: 'human' | 'sequence_propagated'
+    sourcePhotoId?: number | null
+    note?: string | null
+    updatedAt: string
   } | null
 }
 
@@ -115,6 +139,14 @@ export async function scanLibrary(id: number) {
       elapsedMs: number
     }>
   >(`/api/library/${id}/scan`, { method: 'POST' })
+}
+
+export async function updateLibraryRegion(id: number, regionCode: string) {
+  return api<ApiOk<{ regionCode: string }>>(`/api/library/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ regionCode }),
+  })
 }
 
 export async function listPhotos(params: {
@@ -191,6 +223,146 @@ export async function identifyPhoto(id: number) {
     `/api/photos/${id}/identify`,
     {
     method: 'POST',
+    },
+  )
+}
+
+export async function confirmPhotoSpecies(
+  id: number,
+  confirmation: {
+    status: 'confirmed' | 'rejected' | 'unknown'
+    subjectType?: 'bird' | 'non_bird' | 'unknown'
+    scene?: 'wild' | 'captive' | 'unknown'
+    nameZh?: string
+    nameScientific?: string
+    note?: string
+    sourcePhotoId?: number
+  },
+) {
+  return api<ApiOk<{ confirmation: NonNullable<Photo['confirmation']> }>>(
+    `/api/photos/${id}/confirmation`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(confirmation),
+    },
+  )
+}
+
+export type SpeciesAsset = {
+  nameScientific: string
+  nameZh: string
+  confirmedCount: number
+  predictedCount: number
+  bestPhotoId: number
+  latestAt: string | null
+}
+
+export type EvaluationMetrics = {
+  evaluated: number
+  total: number
+  top1Accuracy: number | null
+  top5Recall: number | null
+  acceptedPrecision: number | null
+  reviewRate: number | null
+  unknownRate: number | null
+  birds: {
+    evaluated: number
+    top1Accuracy: number | null
+    top5Recall: number | null
+  }
+  wild: {
+    evaluated: number
+    top1Accuracy: number | null
+    top5Recall: number | null
+  }
+  captive: {
+    evaluated: number
+    top1Accuracy: number | null
+    top5Recall: number | null
+  }
+  nonBird: {
+    total: number
+    rejected: number
+    rejectionRate: number | null
+    autoRejected: number
+    autoRejectedCorrect: number
+    autoRejectPrecision: number | null
+  }
+  birdFalseRejects: number
+  automatic: {
+    accepted: number
+    acceptedCorrect: number
+    acceptedPrecision: number | null
+    coverage: number | null
+  }
+  detector: {
+    enabled: number
+    found: number
+    birdRecall: number | null
+    noBoxRate: number | null
+  }
+  performance: {
+    samples: number
+    meanMs: number | null
+    p95Ms: number | null
+  }
+  sequences: {
+    groups: number
+    rawConsistency: number | null
+    fusedEvaluated: number
+    fusedTop1Accuracy: number | null
+    fusedTop5Recall: number | null
+  }
+}
+
+export async function getSpeciesAssets(libraryId: number) {
+  return api<ApiOk<{ assets: SpeciesAsset[] }>>(`/api/library/${libraryId}/assets`)
+}
+
+export async function getLibraryEvaluation(libraryId: number) {
+  return api<ApiOk<{ metrics: EvaluationMetrics }>>(`/api/library/${libraryId}/evaluation`)
+}
+
+export type PhotoSequence = {
+  id: number
+  representativePhotoId: number
+  pipelineFingerprint: string
+  memberCount: number
+  fused: {
+    provider: 'sequence_fused'
+    consistency: number
+    memberPhotoIds: number[]
+    predictions: Array<{ nameZh?: string; nameScientific?: string; score: number }>
+  }
+}
+
+export async function rebuildSequences(libraryId: number) {
+  return api<ApiOk<{ sequences: PhotoSequence[] }>>(
+    `/api/library/${libraryId}/sequences/rebuild`,
+    { method: 'POST' },
+  )
+}
+
+export async function confirmSequence(
+  libraryId: number,
+  sequenceId: number,
+  confirmation: {
+    sourcePhotoId: number
+    status: 'confirmed' | 'rejected' | 'unknown'
+    subjectType: 'bird' | 'non_bird' | 'unknown'
+    scene: 'wild' | 'captive' | 'unknown'
+    nameZh?: string
+    nameScientific?: string
+    note?: string
+  },
+) {
+  return api<ApiOk<{ count: number }>>(
+    `/api/library/${libraryId}/sequences/${sequenceId}/confirmation`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(confirmation),
     },
   )
 }

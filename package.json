@@ -2,7 +2,7 @@
   "name": "bird-mvp",
   "description": "灵羽图库 (Bird MVP) - 本地鸟类照片智能管理工具",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.2.0",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -18,8 +18,14 @@
     "server:dev": "nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
     "smoke": "tsx scripts/smoke_api.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "test:ai": "cd ai && python3 -m unittest test_pipeline.py",
+    "eval": "tsx scripts/evaluate.ts",
+    "eval:nonbird-threshold": "tsx scripts/calibrate_non_bird.ts",
     "data:clean": "node scripts/clean_data.mjs",
     "labels:cn": "node scripts/ebird_labels.mjs --region CN --locale zh_CN --out data/models/labels.csv",
+    "labels:region": "node scripts/region_labels.mjs",
+    "labels:check": "tsx scripts/check_candidate_coverage.ts",
     "labels:world": "node scripts/ebird_labels.mjs --all --locale zh_CN --out data/models/labels.csv"
   },
   "dependencies": {

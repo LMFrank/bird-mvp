@@ -76,7 +76,7 @@ export default function BatchActionBar() {
       updatePhotos(updates)
       
       const summary = Object.entries(groups)
-        .filter(([_, ids]) => ids.length > 0)
+        .filter(([, ids]) => ids.length > 0)
         .map(([r, ids]) => `${r}星: ${ids.length}张`)
         .join('，') || '0张更新'
 

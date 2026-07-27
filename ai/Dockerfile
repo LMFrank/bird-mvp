@@ -12,7 +12,12 @@ RUN pip install --no-cache-dir -U pip
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libglib2.0-0 libgl1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY app.py /app/app.py
+COPY pipeline.py /app/pipeline.py
 
 EXPOSE 8000
 

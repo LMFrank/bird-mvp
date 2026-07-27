@@ -96,9 +96,10 @@ export function getPhotoDetail(db: DatabaseSync, id: number) {
       `
       SELECT
         p.id, p.library_id, p.abs_path, p.rel_path, p.fingerprint, p.mtime_ms, p.size,
-        p.width, p.height, p.taken_at,
+        p.width, p.height, p.taken_at, p.latitude, p.longitude,
         m.rating, m.status, m.color, m.updated_at,
-        m.aesthetic_score, m.aesthetic_mtime_ms, m.aesthetic_updated_at
+        m.aesthetic_score, m.aesthetic_mtime_ms, m.aesthetic_updated_at,
+        (SELECT sm.sequence_id FROM photo_sequence_members sm WHERE sm.photo_id=p.id) as sequence_id
       FROM photos p
       JOIN photo_meta m ON m.photo_id = p.id
       WHERE p.id = ?
@@ -252,7 +253,13 @@ export function updatePhotoExifCache(
 export function updatePhotoExifBasics(
   db: DatabaseSync,
   id: number,
-  patch: { width?: number | null; height?: number | null; takenAt?: string | null },
+  patch: {
+    width?: number | null
+    height?: number | null
+    takenAt?: string | null
+    latitude?: number | null
+    longitude?: number | null
+  },
 ) {
   const fields: string[] = []
   const params: SQLInputValue[] = []
@@ -267,6 +274,14 @@ export function updatePhotoExifBasics(
   if (typeof patch.takenAt === 'string' && patch.takenAt.trim()) {
     fields.push('taken_at = ?')
     params.push(patch.takenAt.trim())
+  }
+  if (typeof patch.latitude === 'number' && Number.isFinite(patch.latitude) && patch.latitude >= -90 && patch.latitude <= 90) {
+    fields.push('latitude = ?')
+    params.push(patch.latitude)
+  }
+  if (typeof patch.longitude === 'number' && Number.isFinite(patch.longitude) && patch.longitude >= -180 && patch.longitude <= 180) {
+    fields.push('longitude = ?')
+    params.push(patch.longitude)
   }
   if (!fields.length) return
   params.push(id)

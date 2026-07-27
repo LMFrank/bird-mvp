@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso } from './catalog.js'
 import { getRuntimeSetting } from './settings.js'
+import { buildPipelineFingerprint, decidePrediction, type SubjectDecision } from './pipeline.js'
 
 export type AiPrediction = {
   nameZh?: string
@@ -23,6 +24,18 @@ export type AiResult = {
   labelsCount?: number
   promptCount?: number
   predictions: AiPrediction[]
+  labelSet?: string
+  labelsHash?: string
+  pipelineFingerprint?: string
+  pipelineConfig?: Record<string, unknown>
+  decision?: 'accepted' | 'review' | 'unknown'
+  subjectDecision?: SubjectDecision
+  decisionReason?: string
+  embedding?: number[]
+  elapsedMs?: number
+  detectorEnabled?: boolean
+  detectorFound?: boolean
+  roi?: Record<string, unknown>
   fallback?: AiFallback
 }
 
@@ -60,12 +73,47 @@ export function mergeAiResults(results: AiResult[]): AiResult {
     .sort((a, b) => b.score - a.score)
     .slice(0, topk)
 
+  const pipelineConfig = base.pipelineConfig ?? {
+    model: base.model,
+    labelsHash: base.labelsHash,
+    labelSet: base.labelSet,
+  }
+  const minScore = clampFloat(envOrSetting('ACCEPT_MIN_SCORE'), 0.65, 0, 1)
+  const minMargin = clampFloat(envOrSetting('ACCEPT_MIN_MARGIN'), 0.12, 0, 1)
+  const subjectDecision: SubjectDecision = results.some((r) => r.subjectDecision === 'bird')
+    ? 'bird'
+    : results.length > 0 && results.every((r) => r.subjectDecision === 'non_bird')
+      ? 'non_bird'
+      : 'unknown'
+  const decision =
+    subjectDecision === 'bird'
+      ? decidePrediction(merged, { minScore, minMargin })
+      : subjectDecision === 'non_bird'
+        ? 'unknown'
+        : 'review'
   return {
     provider: base.provider,
     model: base.model,
     labelsCount: base.labelsCount,
     promptCount: base.promptCount,
     predictions: merged,
+    labelSet: base.labelSet,
+    labelsHash: base.labelsHash,
+    pipelineConfig,
+    pipelineFingerprint: buildPipelineFingerprint(pipelineConfig),
+    decision,
+    subjectDecision,
+    decisionReason:
+      subjectDecision === 'bird'
+        ? 'bird_evidence_in_inputs'
+        : subjectDecision === 'non_bird'
+          ? 'all_inputs_rejected_as_non_bird'
+          : 'insufficient_bird_evidence',
+    embedding: base.embedding,
+    elapsedMs: results.reduce((sum, result) => sum + Number(result.elapsedMs ?? 0), 0),
+    detectorEnabled: results.some((result) => result.detectorEnabled),
+    detectorFound: results.some((result) => result.detectorFound),
+    roi: base.roi,
   } satisfies AiResult
 }
 
@@ -294,15 +342,17 @@ export async function identifyWithLlmFallback(imageJpeg: Buffer, ai: AiResult): 
   }
 }
 
-export async function identifyWithAi(imageJpeg: Buffer): Promise<AiResult> {
+export async function identifyWithAi(imageJpeg: Buffer, opts?: { regionCode?: string }): Promise<AiResult> {
   const base = String(process.env.BIRD_AI_URL ?? '').trim()
   if (!base) {
     throw new Error('BIRD_AI_URL is not set')
   }
 
-  const url = `${base.replace(/\/$/, '')}/identify`
+  const query = new URLSearchParams()
+  if (opts?.regionCode) query.set('region', opts.regionCode)
+  const url = `${base.replace(/\/$/, '')}/identify${query.size ? `?${query.toString()}` : ''}`
   let res: Response
-  const delaysMs = [0, 1000, 2000, 5000, 10000, 20000, 30000]
+  const delaysMs = [0, 1000, 3000]
   let lastErr: unknown = null
   for (const d of delaysMs) {
     if (d > 0) await new Promise((r) => setTimeout(r, d))
@@ -312,6 +362,7 @@ export async function identifyWithAi(imageJpeg: Buffer): Promise<AiResult> {
       res = await fetch(url, {
         method: 'POST',
         body: form,
+        signal: AbortSignal.timeout(30_000),
       })
       lastErr = null
       if (res.status === 503) {
@@ -357,6 +408,21 @@ export async function identifyWithAi(imageJpeg: Buffer): Promise<AiResult> {
     model: typeof data.model === 'string' ? data.model : 'unknown',
     labelsCount: typeof data.labelsCount === 'number' ? data.labelsCount : undefined,
     promptCount: typeof data.promptCount === 'number' ? data.promptCount : undefined,
+    labelSet: typeof data.labelSet === 'string' ? data.labelSet : undefined,
+    labelsHash: typeof data.labelsHash === 'string' ? data.labelsHash : undefined,
+    pipelineConfig: isRecord(data.pipelineConfig) ? data.pipelineConfig : undefined,
+    roi: isRecord(data.roi) ? data.roi : undefined,
+    subjectDecision:
+      data.subjectDecision === 'bird' || data.subjectDecision === 'non_bird'
+        ? data.subjectDecision
+        : 'unknown',
+    decisionReason: typeof data.decisionReason === 'string' ? data.decisionReason : undefined,
+    embedding: Array.isArray(data.embedding)
+      ? data.embedding.map(Number).filter(Number.isFinite)
+      : undefined,
+    elapsedMs: typeof data.elapsedMs === 'number' ? data.elapsedMs : undefined,
+    detectorEnabled: data.detectorEnabled === true,
+    detectorFound: data.detectorFound === true,
     predictions,
   }
 }
@@ -365,15 +431,25 @@ export function upsertPhotoAi(db: DatabaseSync, photoId: number, ai: AiResult) {
   const now = nowIso()
   db.prepare(
     `
-    INSERT INTO photo_ai(photo_id, provider, model, result_json, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO photo_ai(photo_id, provider, model, result_json, updated_at, pipeline_fingerprint, decision)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(photo_id) DO UPDATE SET
       provider = excluded.provider,
       model = excluded.model,
       result_json = excluded.result_json,
-      updated_at = excluded.updated_at
+      updated_at = excluded.updated_at,
+      pipeline_fingerprint = excluded.pipeline_fingerprint,
+      decision = excluded.decision
     `,
-  ).run(photoId, ai.provider, ai.model, JSON.stringify(ai), now)
+  ).run(
+    photoId,
+    ai.provider,
+    ai.model,
+    JSON.stringify(ai),
+    now,
+    ai.pipelineFingerprint ?? null,
+    ai.decision ?? 'review',
+  )
 
   db.prepare('DELETE FROM photo_ai_predictions WHERE photo_id = ?').run(photoId)
   const ins = db.prepare(
@@ -394,6 +470,14 @@ export function upsertPhotoAi(db: DatabaseSync, photoId: number, ai: AiResult) {
       Number(p.score ?? 0),
       now,
     )
+  }
+  if (Array.isArray(ai.embedding) && ai.embedding.length > 0) {
+    db.prepare(
+      `INSERT INTO photo_sequence_embeddings(photo_id, model, embedding_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(photo_id) DO UPDATE SET
+         model=excluded.model, embedding_json=excluded.embedding_json, updated_at=excluded.updated_at`,
+    ).run(photoId, ai.model, JSON.stringify(ai.embedding), now)
   }
 }
 

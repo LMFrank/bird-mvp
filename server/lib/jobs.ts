@@ -197,6 +197,9 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
     persistJob(j, true)
 
     const optsIdentify = getIdentifyInputOptionsFromEnv()
+    const library = db.prepare('SELECT region_code as regionCode FROM libraries WHERE id=?').get(j.libraryId) as
+      | { regionCode: string }
+      | undefined
 
     for (const r of rows) {
       if (j.cancelRequested || isCancelRequested(j.id)) {
@@ -233,13 +236,19 @@ async function runIdentifyLibraryJob(j: IdentifyLibraryJobInternal, opts: { over
         let lastErr: unknown = null
         for (const jpg of inputs) {
           try {
-            results.push(await identifyWithAi(jpg))
+            results.push(await identifyWithAi(jpg, { regionCode: library?.regionCode }))
             lastErr = null
           } catch (e: unknown) {
             lastErr = e
           }
         }
-        if (!results.length) throw lastErr
+        if (!results.length) {
+          const message = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error')
+          throw new Error(
+            `stage=identify photoId=${r.id} labelSet=${library?.regionCode || 'WORLD'} ` +
+            `pipelineFingerprint=unavailable error=${message}`,
+          )
+        }
         let ai = mergeAiResults(results)
         if (shouldTriggerLlmFallback(ai)) {
           try {

@@ -1,6 +1,17 @@
-# 灵羽图库 (Bird MVP) v0.1.6
+# 灵羽图库 (Bird MVP) v0.2.0
 
 这是一个本地运行的 Web 应用：前端用于快速浏览/筛选/打标，后端负责扫描目录、生成缩略图缓存、SQLite 持久化；并通过一个本地 AI 服务进行鸟种识别（BioCLIP2）。
+
+## v0.2.0：可信识别与物种资产闭环
+
+- 人工真值：物种确认与 `bird/non_bird/unknown`、`wild/captive/unknown` 正交记录
+- 可量化评测：总体/野生/圈养 Top1、Top5，非鸟拒识、自动通过精度/覆盖率、检测召回、耗时和连拍融合
+- Pipeline 追溯：新识别结果记录候选集 hash、模型、prompt、检测与融合配置 fingerprint
+- 区域候选集：`data/models/regions/<REGION>.csv ∪ data/models/captive.csv`，按科学学名去重
+- 安全拒识：无鸟框只能降低可信度；非鸟阈值默认禁用，必须经 88+12 真值集校准
+- 连拍融合：按 EXIF 时间和 BioCLIP embedding 分组，保存独立融合 Top5，并支持显式确认整组
+- 媒体资产：按物种聚合预测数、人工确认数和代表照片
+- EXIF GPS：新扫描或回填时会保存合法的经纬度
 
 ## 一句话启动及使用
 
@@ -16,13 +27,57 @@ npm run labels:world && docker compose restart ai
 # 5. 如需清除识别结果：支持单张清除（详情页垃圾桶）与按库一键清除（顶部“清除识别”）
 ```
 
+### 建立区域候选集
+
+```bash
+# 例：生成江苏区域候选集，需要 EBIRD_API_KEY
+npm run labels:region -- CN-JS
+docker compose restart ai
+```
+
+在页面“物种资产”区域把图库候选区域设为 `CN-JS`。AI 会将区域 CSV 与仓库内
+`data/models/captive.csv` 合并，结果的 `labelSet` 记录为 `CN-JS+captive`。区域文件或
+`captive.csv` 缺失时会明确报错，不会静默退回全球集；需要全球基线时把区域设为 `WORLD`。
+
+### 建立人工真值并评测
+
+在照片详情中先选择 `wild/captive/unknown`，再确认 Top5、标记“候选均不对”“非鸟”或
+“无法判断”。`sample-photos/` 是 88 张鸟类主集，`rejection-photos/` 是独立的 12 张拒识集；
+Docker 内路径分别为 `/photos` 和 `/rejection-photos`。随后可在页面刷新评测，或运行：
+
+```bash
+npm run eval -- data/cache/catalog.sqlite
+npm run eval:nonbird-threshold -- data/cache/catalog.sqlite
+# 区域+captive 必须覆盖全部已确认物种，否则退出码为 2
+npm run labels:check -- data/cache/catalog.sqlite data/models/regions/CN-JS.csv
+```
+
+第二条命令只有在非鸟自动拒识精度达到 95% 且鸟类误拒不超过 1 张时才输出可启用阈值，
+否则保持 `NON_BIRD_MAX_SCORE=0`。准确率为空表示还没有相应人工真值，不会用模型置信度冒充准确率。
+自动通过精度与覆盖率只以“已确认科学学名的鸟图”为评测分母；`bird/status=unknown` 不会被
+当成自动通过错误。同时报告 `allInputAccepted/allInputCoverage`，用于观察所有输入上的实际
+自动决策量，避免可信精度口径掩盖人工复核工作量。
+
+固定实验顺序为：
+
+| 组别 | 图库区域 | 检测 | Prompt |
+|---|---|---|---|
+| A | `WORLD` | `DETECT_ENABLED=0` | `single` |
+| B | `WORLD` | `DETECT_ENABLED=1`、1280、Top-N=3 | `single` |
+| C | `CN`/拍摄区域 | 同 B | `single` |
+| D | `CN`/拍摄区域 | 同 B | `scientific-4` |
+
+每次只改一项，覆盖重识别后运行同一条 `npm run eval`。D 组只用于缓存完成后的实验，
+当前默认仍是 `single`。
+
 
 ## Docker 部署（推荐）
 
 ### 1) 配置镜像源（Docker Desktop）
 
 使用开源镜像站搜索镜像：https://docker.aityp.com/
-本项目dockerfile已直接添加国内镜像源，无需额外配置。
+应用镜像使用 Docker Hub 官方多架构 Node 基础镜像，arm64/amd64 均可构建；国内网络可在
+Docker Desktop 中配置镜像加速。AI 的 CUDA 镜像仍面向 Linux GPU/amd64 运行环境。
 
 ### 2) 启动
 
@@ -48,7 +103,8 @@ make data-clean
 
 ### 3) 添加你的照片目录
 
-容器内默认挂载了 `./sample-photos` 到 `/photos`。你可以在页面里新增库路径为：`/photos`，然后点击“扫描”。
+容器内默认挂载 `./sample-photos` 到 `/photos`，并挂载 `./rejection-photos` 到
+`/rejection-photos`。请建立两个图库，分别用于鸟种准确率和非鸟拒识评测。
 仓库内的 `sample-photos` 默认只保留少量示例图片。
 
 如果要换成你自己的目录，请修改 `docker-compose.yml` 的 `app.volumes`，把宿主机目录挂载到容器（示例）：
@@ -166,11 +222,15 @@ docker compose up -d --force-recreate ai
 
 ### 无 GPU / 强制 CPU
 
-如果你的 Docker 环境没有可用的 NVIDIA GPU：
+默认 `docker compose up` 不请求 GPU，可直接在 Mac 或无 NVIDIA GPU 的机器上使用 CPU。
 
-1) 在 `docker-compose.yml` 的 `ai.environment` 里加：`FORCE_CPU=1`
+有 NVIDIA Container Toolkit 时，通过覆盖文件启用 GPU：
 
-2) 删除或注释 `ai.gpus: all`
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+```
+
+如需即使检测到 GPU 也强制 CPU，可设置 `FORCE_CPU=1`。
 
 ### 识别报错 fetch failed / AI 不可用
 
@@ -196,6 +256,8 @@ docker compose up -d --force-recreate ai
 - `DETECT_MODEL`：检测模型（默认 `yolov8n.pt`）
 - `DETECT_CONF`：检测阈值（默认 `0.25`）
 - `DETECT_CLASS_ID`：检测类别（默认 `14`，COCO 的 bird）
+- `DETECT_IMGSZ`：首轮检测基线为 `1280`
+- `DETECT_TOP_BOXES`：首轮检测基线为 `3`
 - `DETECT_MAX_CROPS`：检测到目标后最多跑几张裁剪（默认 `3`）
 - `DETECT_FALLBACK_CROPS`：检测不到时是否做兜底裁剪（默认 `1`）
 - `DETECT_FALLBACK_MAX`：兜底裁剪最多跑几张（默认 `4`）
@@ -203,9 +265,13 @@ docker compose up -d --force-recreate ai
 建议先打开健康检查确认检测是否启用与是否报错：
 - `http://localhost:3001/api/ai/health`（会返回 detectEnabled/detectError）
 
+检测到鸟时才允许按物种阈值自动通过；未检测到鸟且分数较高时进入待复核。未检测到鸟且
+分数低时也只有在 `NON_BIRD_MAX_SCORE` 经真值集校准并显式启用后才自动拒识。
+
 ### 识别非中国鸟类（例如金刚鹦鹉）：生成“全球鸟种”CSV
 
-如果你的照片里包含明显不属于中国鸟类范围的物种（例如金刚鹦鹉），只生成中国（CN）物种标签会导致模型“只能在 CN 候选里硬猜”，结果会很不对。
+常见圈养/展出鸟应维护在 `data/models/captive.csv`，正常主路径使用区域集与该文件的并集。
+全球集只用于 A/B 基线或未来显式的全球重识别，不作为区域文件缺失时的 fallback。
 
 可以用脚本生成全量 eBird taxonomy（全球物种）作为候选集：
 
@@ -251,6 +317,15 @@ npm run dev
 - `server/lib`：基础设施与通用工具（AI client、缩略图、migrations、校验/错误等）
 
 ## 更新记录
+
+### v0.2.0
+
+- 建立 88 张鸟图与 12 张非鸟图的独立可信评测口径，支持 `bird/non_bird/unknown` 和 `wild/captive/unknown` 人工真值。
+- 新增安全拒识、Region+captive 候选集合并与覆盖门禁；无检测框不再直接等同非鸟。
+- 新增连拍分组、Top5 加权融合、代表照片选择和显式整组确认。
+- 新增总体、wild、captive、拒识、自动通过、检测、耗时与连拍指标，并记录 pipeline fingerprint。
+- 完善物种资产面板、EXIF GPS、Docker 多架构应用构建和浏览器端到端回归。
+- 新增 [本地 API 契约](docs/API.md)，说明真值、评测、候选区域和连拍接口。
 
 ### v0.1.5
 

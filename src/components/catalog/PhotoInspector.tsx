@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Copy, ExternalLink, XCircle, Trash2, Activity } from 'lucide-react'
-import { thumbUrl, checkAiHealth } from '@/api/catalogApi'
+import {
+  thumbUrl,
+  checkAiHealth,
+  confirmPhotoSpecies,
+  confirmSequence,
+} from '@/api/catalogApi'
 import { useCatalogStore } from '@/store/catalogStore'
 import TagEditor from '@/components/catalog/TagEditor'
 import { getBirdName } from '@/lib/utils'
@@ -59,11 +64,14 @@ export default function PhotoInspector() {
     displayLang,
     photoIdentifyingId,
     photoClearingId,
+    updatePhotos,
+    selectedLibraryId,
   } = useCatalogStore()
 
   const [tagHotkeySignal, setTagHotkeySignal] = useState(0)
   const [aiHealthy, setAiHealthy] = useState<boolean | null>(null)
   const [checkingHealth, setCheckingHealth] = useState(false)
+  const [truthScene, setTruthScene] = useState<'wild' | 'captive' | 'unknown'>('unknown')
 
   const idx = useMemo(() => photos.findIndex((p) => p.id === selectedPhotoId), [photos, selectedPhotoId])
   const current = useMemo(() => {
@@ -75,6 +83,23 @@ export default function PhotoInspector() {
   const nextId = idx >= 0 && idx < photos.length - 1 ? photos[idx + 1]!.id : null
 
   const ai = current?.ai ?? null
+
+  const saveConfirmation = async (input: {
+    status: 'confirmed' | 'rejected' | 'unknown'
+    subjectType: 'bird' | 'non_bird' | 'unknown'
+    scene: 'wild' | 'captive' | 'unknown'
+    nameZh?: string
+    nameScientific?: string
+  }) => {
+    if (!current) return
+    const result = await confirmPhotoSpecies(current.id, input)
+    updatePhotos(new Map([[current.id, { confirmation: result.confirmation }]]))
+    window.dispatchEvent(new Event('bird:assets-changed'))
+  }
+
+  useEffect(() => {
+    setTruthScene(current?.confirmation?.scene ?? 'unknown')
+  }, [current?.id, current?.confirmation?.scene])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -268,11 +293,58 @@ export default function PhotoInspector() {
 
           {ai && ai.predictions?.length ? (
             <div className="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-              <div className="text-xs text-zinc-600">
-                {ai.provider} / {ai.model}
-                {typeof ai.labelsCount === 'number' ? ` · labels ${ai.labelsCount}` : ''}
-                {typeof ai.promptCount === 'number' ? ` · prompts ${ai.promptCount}` : ''}
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-xs text-zinc-600">
+                  {ai.provider} / {ai.model}
+                  {typeof ai.labelsCount === 'number' ? ` · labels ${ai.labelsCount}` : ''}
+                  {ai.labelSet ? ` · ${ai.labelSet}` : ''}
+                  {ai.pipelineFingerprint ? ` · ${ai.pipelineFingerprint}` : ''}
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    ai.decision === 'accepted'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : ai.decision === 'unknown'
+                        ? 'bg-zinc-200 text-zinc-700'
+                        : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {ai.decision === 'accepted' ? '自动通过' : ai.decision === 'unknown' ? '未知' : '待复核'}
+                </span>
               </div>
+              <div className="text-xs text-zinc-500">
+                主体判断：
+                {ai.subjectDecision === 'bird'
+                  ? '检测到鸟'
+                  : ai.subjectDecision === 'non_bird'
+                    ? '非鸟拒识'
+                    : '证据不足'}
+                {ai.decisionReason ? ` · ${ai.decisionReason}` : ''}
+              </div>
+              {current.confirmation ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  人工结论：{current.confirmation.subjectType === 'non_bird'
+                    ? '非鸟'
+                    : current.confirmation.status === 'confirmed'
+                    ? `${current.confirmation.nameZh || current.confirmation.nameScientific}（已确认）`
+                    : current.confirmation.status === 'rejected' ? '候选均不对' : '无法判断'}
+                  {current.confirmation.subjectType === 'bird'
+                    ? ` · ${current.confirmation.scene === 'wild' ? '野生' : current.confirmation.scene === 'captive' ? '圈养/展出' : '场景未知'}`
+                    : ''}
+                </div>
+              ) : null}
+              <label className="flex items-center gap-2 text-xs text-zinc-600">
+                鸟类场景
+                <select
+                  className="rounded-md border border-zinc-300 bg-white px-2 py-1"
+                  value={truthScene}
+                  onChange={(event) => setTruthScene(event.target.value as typeof truthScene)}
+                >
+                  <option value="unknown">未知</option>
+                  <option value="wild">野生</option>
+                  <option value="captive">圈养/展出</option>
+                </select>
+              </label>
               {typeof ai.labelsCount === 'number' && ai.labelsCount < 100 ? (
                 <div className="text-xs text-zinc-500">
                   当前标签数较少，识别仅供参考；建议提供全量鸟种 CSV 到 data/models/labels.csv
@@ -351,10 +423,78 @@ export default function PhotoInspector() {
                       >
                         加入标签
                       </button>
+                      {p.nameScientific ? (
+                        <button
+                          className="shrink-0 rounded-md bg-emerald-800 px-2 py-1 text-xs text-white hover:bg-emerald-700"
+                          onClick={() => void saveConfirmation({
+                            status: 'confirmed',
+                            subjectType: 'bird',
+                            scene: truthScene,
+                            nameZh: p.nameZh,
+                            nameScientific: p.nameScientific,
+                          })}
+                          title="保存为人工真值"
+                        >
+                          确认
+                        </button>
+                      ) : null}
                     </div>
                   )
                 })}
               </div>
+              <div className="flex gap-2 border-t border-zinc-200 pt-2">
+                <button
+                  className="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                  onClick={() => void saveConfirmation({
+                    status: 'rejected',
+                    subjectType: 'bird',
+                    scene: truthScene,
+                  })}
+                >
+                  候选均不对
+                </button>
+                <button
+                  className="rounded-md border border-orange-200 bg-white px-2 py-1 text-xs text-orange-700 hover:bg-orange-50"
+                  onClick={() => void saveConfirmation({
+                    status: 'rejected',
+                    subjectType: 'non_bird',
+                    scene: 'unknown',
+                  })}
+                >
+                  非鸟
+                </button>
+                <button
+                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+                  onClick={() => void saveConfirmation({
+                    status: 'unknown',
+                    subjectType: 'unknown',
+                    scene: 'unknown',
+                  })}
+                >
+                  无法判断
+                </button>
+              </div>
+              {current.sequence_id && current.confirmation && selectedLibraryId ? (
+                <button
+                  className="w-full rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                  onClick={async () => {
+                    const confirmation = current.confirmation
+                    if (!confirmation || !current.sequence_id) return
+                    await confirmSequence(selectedLibraryId, current.sequence_id, {
+                      sourcePhotoId: current.id,
+                      status: confirmation.status,
+                      subjectType: confirmation.subjectType,
+                      scene: confirmation.scene,
+                      nameZh: confirmation.nameZh ?? undefined,
+                      nameScientific: confirmation.nameScientific ?? undefined,
+                      note: confirmation.note ?? undefined,
+                    })
+                    window.dispatchEvent(new Event('bird:assets-changed'))
+                  }}
+                >
+                  确认整组连拍
+                </button>
+              ) : null}
             </div>
           ) : (
             <div className="text-xs text-zinc-500">暂无结果，点击“识别”获取 Top5 候选</div>

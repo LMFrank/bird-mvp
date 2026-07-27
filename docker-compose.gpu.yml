@@ -1,0 +1,3 @@
+services:
+  ai:
+    gpus: all

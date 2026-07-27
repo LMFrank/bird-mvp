@@ -1,0 +1,2 @@
+ALTER TABLE photos ADD COLUMN latitude REAL;
+ALTER TABLE photos ADD COLUMN longitude REAL;

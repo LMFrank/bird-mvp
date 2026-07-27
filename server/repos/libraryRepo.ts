@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 export function listLibraries(db: DatabaseSync) {
-  return db.prepare('SELECT id, root_path, created_at FROM libraries ORDER BY id DESC').all()
+  return db.prepare('SELECT id, root_path, region_code, created_at FROM libraries ORDER BY id DESC').all()
 }
 
 export function insertLibraryIgnore(db: DatabaseSync, rootPath: string, createdAt: string) {
@@ -13,8 +13,8 @@ export function getLibraryByRootPath(db: DatabaseSync, rootPath: string) {
 }
 
 export function getLibraryById(db: DatabaseSync, id: number) {
-  return db.prepare('SELECT id, root_path FROM libraries WHERE id = ?').get(id) as
-    | { id: number; root_path: string }
+  return db.prepare('SELECT id, root_path, region_code FROM libraries WHERE id = ?').get(id) as
+    | { id: number; root_path: string; region_code: string }
     | undefined
 }
 
@@ -50,6 +50,7 @@ export function deletePhotosCascade(db: DatabaseSync, photoIds: number[]) {
   const delTags = db.prepare('DELETE FROM photo_tags WHERE photo_id = ?')
   const delAiPred = db.prepare('DELETE FROM photo_ai_predictions WHERE photo_id = ?')
   const delAi = db.prepare('DELETE FROM photo_ai WHERE photo_id = ?')
+  const delConfirmation = db.prepare('DELETE FROM photo_species_confirmations WHERE photo_id = ?')
   const delMeta = db.prepare('DELETE FROM photo_meta WHERE photo_id = ?')
   const delPhoto = db.prepare('DELETE FROM photos WHERE id = ?')
 
@@ -59,6 +60,7 @@ export function deletePhotosCascade(db: DatabaseSync, photoIds: number[]) {
       delTags.run(id)
       delAiPred.run(id)
       delAi.run(id)
+      delConfirmation.run(id)
       delMeta.run(id)
       delPhoto.run(id)
     }

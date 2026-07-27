@@ -23,6 +23,7 @@ import {
   updatePhotoMeta,
   updatePhotosMeta,
 } from '../repos/photoRepo.js'
+import { getPhotoConfirmationService } from './speciesService.js'
 
 function clamp01(v: number) {
   if (!Number.isFinite(v)) return 0
@@ -88,7 +89,8 @@ export function getPhotoService(id: number) {
   } catch {
     exif = null
   }
-  return { ...photo, aesthetic_score_cal, exif, tags, ai }
+  const confirmation = getPhotoConfirmationService(id)
+  return { ...photo, aesthetic_score_cal, exif, tags, ai, confirmation }
 }
 
 export async function backfillAestheticForPhotosService(opts: { libraryId: number; photoIds: number[] }) {
@@ -207,6 +209,8 @@ export async function backfillExifForPhotosService(opts: { libraryId: number; ph
         width: typeof exif.width === 'number' ? exif.width : null,
         height: typeof exif.height === 'number' ? exif.height : null,
         takenAt: typeof exif.takenAt === 'string' ? exif.takenAt : null,
+        latitude: typeof exif.latitude === 'number' ? exif.latitude : null,
+        longitude: typeof exif.longitude === 'number' ? exif.longitude : null,
       })
       updatePhotoExifCache(db, r.id, { exifJson: JSON.stringify(exif), mtimeMs, now })
       updated.push({
@@ -240,6 +244,9 @@ export async function identifyPhotoService(id: number) {
   const mtimeMs = Math.trunc(st.mtimeMs)
 
   const opts = getIdentifyInputOptionsFromEnv()
+  const context = db.prepare(
+    'SELECT l.region_code as regionCode FROM photos p JOIN libraries l ON l.id=p.library_id WHERE p.id=?',
+  ).get(id) as { regionCode: string } | undefined
   const inputs = await buildIdentifyJpegsFromPathCached(id, absPath, {
     maxSize: opts.maxSize,
     quality: opts.quality,
@@ -251,13 +258,19 @@ export async function identifyPhotoService(id: number) {
   let lastErr: unknown = null
   for (const jpg of inputs) {
     try {
-      results.push(await identifyWithAi(jpg))
+      results.push(await identifyWithAi(jpg, { regionCode: context?.regionCode }))
       lastErr = null
     } catch (e: unknown) {
       lastErr = e
     }
   }
-  if (!results.length) throw lastErr
+  if (!results.length) {
+    const message = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error')
+    throw new Error(
+      `stage=identify photoId=${id} labelSet=${context?.regionCode || 'WORLD'} ` +
+      `pipelineFingerprint=unavailable error=${message}`,
+    )
+  }
 
   let ai = mergeAiResults(results)
   if (shouldTriggerLlmFallback(ai)) {

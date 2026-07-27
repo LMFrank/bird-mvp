@@ -3,6 +3,7 @@ import FilterBar from '@/components/catalog/FilterBar'
 import VirtualPhotoGrid from '@/components/catalog/VirtualPhotoGrid'
 import PhotoInspector from '@/components/catalog/PhotoInspector'
 import BatchActionBar from '@/components/catalog/BatchActionBar'
+import SpeciesAssetsPanel from '@/components/catalog/SpeciesAssetsPanel'
 import { useCatalogStore } from '@/store/catalogStore'
 
 export default function Home() {
@@ -18,6 +19,7 @@ function CatalogShell() {
   return (
     <div className="flex min-h-screen flex-col">
       <LibraryBar />
+      <SpeciesAssetsPanel />
       <FilterBar />
       {error ? (
         <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{error}</div>

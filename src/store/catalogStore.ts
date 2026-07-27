@@ -149,6 +149,8 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       set({ libraries: data.libraries })
       const current = get().selectedLibraryId
       if (!current && data.libraries.length) {
+        // `selectLibrary` 会立即加载照片；先释放全局 loading，避免 loadMore 被短路。
+        set({ loading: false })
         await get().selectLibrary(data.libraries[0]!.id)
       }
     } catch (e: unknown) {

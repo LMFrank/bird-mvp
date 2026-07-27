@@ -12,6 +12,8 @@ export type ExifSummary = {
   takenAt?: string
   width?: number
   height?: number
+  latitude?: number
+  longitude?: number
 }
 
 function asNum(v: unknown): number | null {
@@ -76,7 +78,7 @@ export async function readExifSummary(absPath: string): Promise<ExifSummary> {
     tiff: true,
     ifd0: {},
     exif: true,
-    gps: false,
+    gps: true,
     xmp: false,
     icc: false,
     pick: [
@@ -95,6 +97,8 @@ export async function readExifSummary(absPath: string): Promise<ExifSummary> {
       'ImageHeight',
       'ExifImageWidth',
       'ExifImageHeight',
+      'latitude',
+      'longitude',
     ],
   })) as Record<string, unknown> | null
 
@@ -136,5 +140,9 @@ export async function readExifSummary(absPath: string): Promise<ExifSummary> {
   if (takenAt) out.takenAt = takenAt
   if (width !== null) out.width = width
   if (height !== null) out.height = height
+  const latitude = asNum(data?.latitude)
+  const longitude = asNum(data?.longitude)
+  if (latitude !== null && latitude >= -90 && latitude <= 90) out.latitude = latitude
+  if (longitude !== null && longitude >= -180 && longitude <= 180) out.longitude = longitude
   return out
 }

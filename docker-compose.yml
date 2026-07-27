@@ -32,6 +32,7 @@ services:
     volumes:
       - ./data/cache:/app/data/cache
       - ./sample-photos:/photos:ro
+      - ./rejection-photos:/rejection-photos:ro
     depends_on:
       - ai
 
@@ -44,6 +45,14 @@ services:
       - TOPK=5
       - BIRD_LABELS_PATH=/models/labels.csv
       - HF_ENDPOINT=https://hf-mirror.com
+      - BIRD_REGION_LABELS_DIR=/models/regions
+      - BIRD_CAPTIVE_LABELS_PATH=/models/captive.csv
+      - DETECT_ENABLED=${DETECT_ENABLED:-1}
+      - DETECT_IMGSZ=${DETECT_IMGSZ:-1280}
+      - DETECT_TOP_BOXES=${DETECT_TOP_BOXES:-3}
+      - FUSION_STRATEGY=${FUSION_STRATEGY:-max}
+      - FUSION_ROI_WEIGHT=${FUSION_ROI_WEIGHT:-1.2}
+      - PROMPT_MODE=${PROMPT_MODE:-single}
+      - NON_BIRD_MAX_SCORE=${NON_BIRD_MAX_SCORE:-0}
     volumes:
       - ./data/models:/models
-    gpus: all

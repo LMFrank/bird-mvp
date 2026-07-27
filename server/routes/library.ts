@@ -8,12 +8,67 @@ import {
   listLibrariesService,
   scanLibraryService,
 } from '../services/libraryService.js'
+import { evaluateLibraryService, listSpeciesAssetsService } from '../services/speciesService.js'
+import { getDb } from '../lib/catalog.js'
+import {
+  confirmSequenceService,
+  listSequencesService,
+  rebuildSequencesService,
+} from '../services/sequenceService.js'
 
 const router = express.Router()
 
 router.get('/', (req: Request, res: Response) => {
   void req
   res.json({ success: true, libraries: listLibrariesService() })
+})
+
+router.get('/:id/assets', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  res.json({ success: true, assets: listSpeciesAssetsService(id) })
+})
+
+router.get('/:id/evaluation', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  res.json({ success: true, metrics: evaluateLibraryService(id) })
+})
+
+router.get('/:id/sequences', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  res.json({ success: true, sequences: listSequencesService(id) })
+})
+
+router.post('/:id/sequences/rebuild', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  const maxGapMs = asInt(req.body?.maxGapMs, { default: 10_000, min: 1_000, max: 300_000 })
+  const minSimilarity = Number(req.body?.minSimilarity ?? 0.9)
+  res.json({
+    success: true,
+    sequences: rebuildSequencesService(id, { maxGapMs, minSimilarity }),
+  })
+})
+
+router.put('/:id/sequences/:sequenceId/confirmation', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  const sequenceId = requiredInt('sequenceId', req.params.sequenceId)
+  try {
+    const result = confirmSequenceService(id, sequenceId, req.body ?? {})
+    if (!result) return void res.status(404).json({ success: false, error: 'sequence not found' })
+    res.json({ success: true, ...result })
+  } catch (error: unknown) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'invalid sequence confirmation',
+    })
+  }
+})
+
+router.patch('/:id', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  const regionCode = requiredString('regionCode', req.body?.regionCode).toUpperCase().slice(0, 32)
+  const result = getDb().prepare('UPDATE libraries SET region_code=? WHERE id=?').run(regionCode, id)
+  if (!result.changes) return void res.status(404).json({ success: false, error: 'library not found' })
+  res.json({ success: true, regionCode })
 })
 
 router.post('/', asyncHandler(async (req: Request, res: Response) => {

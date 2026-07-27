@@ -16,6 +16,7 @@ import {
   patchPhotoService,
 } from '../services/photoService.js'
 import type { ListPhotosQuery } from '../repos/photoRepo.js'
+import { confirmPhotoSpeciesService } from '../services/speciesService.js'
 
 const router = express.Router()
 
@@ -89,6 +90,22 @@ router.delete('/:id/ai', (req: Request, res: Response) => {
   const id = requiredInt('id', req.params.id)
   deletePhotoAiService(id)
   res.json({ success: true })
+})
+
+router.put('/:id/confirmation', (req: Request, res: Response) => {
+  const id = requiredInt('id', req.params.id)
+  try {
+    const confirmation = confirmPhotoSpeciesService(id, req.body ?? {})
+    if (!confirmation) throw notFound('photo not found')
+    res.json({ success: true, confirmation })
+  } catch (error: unknown) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError({
+      status: 400,
+      code: 'INVALID_CONFIRMATION',
+      message: error instanceof Error ? error.message : 'invalid confirmation',
+    })
+  }
 })
 
 router.patch('/batch', (req: Request, res: Response) => {

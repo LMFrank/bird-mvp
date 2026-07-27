@@ -22,6 +22,10 @@ dist-ssr
 api/.cache/
 data/cache/
 data/models/
+!data/models/
+data/models/*
+!data/models/captive.csv
+data/eval/
 server/dist/
 .git copy/
 data/cache/*.sqlite*
@@ -54,3 +58,8 @@ venv/
 *.sln
 *.sw?
 .vite
+.trae/
+
+# Local photo evaluation fixtures
+/sample-photos/*
+/rejection-photos/
